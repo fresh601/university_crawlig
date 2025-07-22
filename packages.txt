@@ -1,0 +1,2 @@
+fonts-unfonts-core
+language-pack-ko
