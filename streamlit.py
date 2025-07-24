@@ -5,18 +5,26 @@ from bs4 import BeautifulSoup
 import time
 from io import BytesIO
 
-# --- 대학 목록 불러오기 ---
+# --- 대학 목록 불러오기 (GitHub URL 사용) ---
 @st.cache_data
-def load_university_list(file_path, sheet_name="Sheet1"):
-    df = pd.read_excel(file_path, sheet_name=sheet_name)
-    df = df.dropna(subset=[df.columns[0], df.columns[1]])
-    return df.values.tolist()
+def load_university_list(github_url):
+    try:
+        response = requests.get(github_url)
+        response.raise_for_status() # HTTP 오류가 발생하면 예외 발생
+        file_bytes = BytesIO(response.content)
+        df = pd.read_excel(file_bytes, engine='openpyxl')
+        df = df.dropna(subset=[df.columns[0], df.columns[1]])
+        return df.values.tolist()
+    except requests.exceptions.RequestException as e:
+        st.error(f"GitHub에서 파일을 불러오는 데 실패했습니다: {e}")
+        return None
 
 # --- 크롤링 함수 ---
+# (기존 코드와 동일)
 def crawl_admission_result(univ_name, univ_code, selected_types):
     cookies = {
         'WMONID': 'NYfDEAkX3Jy',
-        'JSESSIONID': 'V9Tor4qz9JI1R0wOWXqKXhcJbeLiyXWdTSgfWj1hzo1aRGbUlCTAoSQSWOuxxFFK.amV1c19kb21haW4vYWRpZ2Ex',
+        'JSESSIONID': 'V9Tor4qz9JI1R0wOWXqKXhcJbeLiyXWdTSgfWj1hzo1aRGzUlCTAoSQSWOuxxFFK.amV1c19kb21haW4vYWRpZ2Ex',
     }
 
     headers = {
@@ -99,10 +107,12 @@ def crawl_admission_result(univ_name, univ_code, selected_types):
 # --- Streamlit 앱 시작 ---
 st.title("🎓 2025 대학 입시 결과 크롤링")
 
-uploaded_file = st.file_uploader("📁 '대학교별 코드.xlsx' 업로드", type=['xlsx'])
+# GitHub raw 파일 URL
+GITHUB_RAW_URL = "https://raw.githubusercontent.com/fresh601/university_crawlig/main/대학교별%20코드.xlsx"
 
-if uploaded_file:
-    univ_list = load_university_list(uploaded_file)
+univ_list = load_university_list(GITHUB_RAW_URL)
+
+if univ_list is not None:
     univ_dict = {name: code for name, code in univ_list}
 
     selected_univ = st.selectbox("🏫 대학 선택", list(univ_dict.keys()))
@@ -132,4 +142,4 @@ if uploaded_file:
                     st.dataframe(df)
 
 else:
-    st.info("왼쪽에서 '대학교별 코드.xlsx' 파일을 먼저 업로드하세요.")
+    st.info("GitHub에서 '대학교별 코드.xlsx' 파일을 불러오는 데 실패했습니다. URL을 확인해 주세요.")
