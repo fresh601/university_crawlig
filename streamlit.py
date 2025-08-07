@@ -5,6 +5,13 @@ from bs4 import BeautifulSoup
 import time
 from io import BytesIO
 
+# --- 전형 코드 매핑 ---
+types = {
+    "학생부종합": {"upcd": "20", "cd": "22"},
+    "학생부교과": {"upcd": "30", "cd": "32"},
+    "수능": {"upcd": "40", "cd": "42"},
+}
+
 # --- 대학 목록 불러오기 (GitHub URL 사용) ---
 @st.cache_data
 def load_university_list(github_url):
@@ -19,7 +26,7 @@ def load_university_list(github_url):
         st.error(f"GitHub에서 파일을 불러오는 데 실패했습니다: {e}")
         return None
 
-# --- 크롤링 함수 수정: 여러 테이블 처리 로직 추가 ---
+# --- 크롤링 함수: 여러 테이블 처리 로직 ---
 def crawl_admission_result(univ_name, univ_code, selected_types):
     cookies = {
         'WMONID': 'NYfDEAkX3Jy',
@@ -35,18 +42,14 @@ def crawl_admission_result(univ_name, univ_code, selected_types):
         'X-CSRF-TOKEN': 'b4561457-4e76-449b-9099-c36118c3f560',
         'X-Requested-With': 'XMLHttpRequest',
     }
-    types = {
-        "학생부종합": {"upcd": "20", "cd": "22"},
-        "학생부교과": {"upcd": "30", "cd": "32"},
-        "수능": {"upcd": "40", "cd": "42"},
-    }
 
     sheet_data = {}
 
     for name in selected_types:
-        # 수정: 각 전형마다 all_data 리스트 초기화
-        all_data = []  # 모든 테이블을 저장할 리스트
-        codes = types[name]
+        all_data = []
+        codes = types.get(name)
+        if not codes:
+            continue
         data = {
             '_csrf': 'b4561457-4e76-449b-9099-c36118c3f560',
             'searchSyr': '2025',
@@ -69,7 +72,6 @@ def crawl_admission_result(univ_name, univ_code, selected_types):
             continue
 
         for table in tables:
-            # 병합 셀 처리
             span_map = {}
             table_matrix = []
             rows = table.find_all('tr')
@@ -94,11 +96,9 @@ def crawl_admission_result(univ_name, univ_code, selected_types):
                 table_matrix.append(current_row[:col_idx])
             df = pd.DataFrame(table_matrix).fillna('')
             all_data.append(df)
-            # 수정: 테이블 간 구분을 위해 빈 행 추가
             all_data.append(pd.DataFrame([['' for _ in range(df.shape[1])]]))
 
         if all_data:
-            # 수정: 여러 테이블을 이어붙인 후 sheet_data에 저장
             combined = pd.concat(all_data, ignore_index=True)
             sheet_data[name] = combined
 
@@ -109,20 +109,24 @@ st.title("🎓 2025 대학 입시 결과 크롤링")
 
 GITHUB_RAW_URL = "https://raw.githubusercontent.com/fresh601/university_crawlig/main/대학교별%20코드.xlsx"
 univ_list = load_university_list(GITHUB_RAW_URL)
-if univ_list:
+
+if univ_list is not None:
     univ_dict = {name: code for name, code in univ_list}
+
     selected_univ = st.selectbox("🏫 대학 선택", list(univ_dict.keys()))
     selected_types = st.multiselect("📌 전형 선택", list(types.keys()), default=["학생부종합"])
+
     if st.button("📊 입시결과 불러오기"):
         with st.spinner(f"{selected_univ}의 입시결과를 가져오는 중입니다..."):
             sheet_data = crawl_admission_result(selected_univ, univ_dict[selected_univ], selected_types)
+
             if not sheet_data:
                 st.warning("해당 대학의 선택한 전형 결과가 없습니다.")
             else:
                 output = BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    for name, df in sheet_data.items():
-                        df.to_excel(writer, sheet_name=name, index=False, header=False)
+                    for sheet_name, df in sheet_data.items():
+                        df.to_excel(writer, sheet_name=sheet_name, index=False, header=False)
                 st.success("🎉 크롤링 완료!")
                 st.download_button(
                     label="📥 엑셀 파일 다운로드",
@@ -130,8 +134,11 @@ if univ_list:
                     file_name=f"{selected_univ}_2025년_대학입시결과.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
-                for name, df in sheet_data.items():
-                    st.subheader(f"📄 {name}")
+
+                for sheet_name, df in sheet_data.items():
+                    st.subheader(f"📄 {sheet_name}")
                     st.dataframe(df)
 else:
     st.info("GitHub에서 '대학교별 코드.xlsx' 파일을 불러오는 데 실패했습니다. URL을 확인해 주세요.")
+
+
