@@ -52,7 +52,7 @@ def crawl_admission_result(univ_name, univ_code, selected_types):
             continue
         data = {
             '_csrf': 'b4561457-4e76-449b-9099-c36118c3f560',
-            'searchSyr': '2025',
+            'searchSyr': '2026',
             'unvCd': str(univ_code).zfill(7),
             'searchUnvComp': '0',
             'tsrdCmphSlcnArtclUpCd': codes['upcd'],
@@ -140,5 +140,6 @@ if univ_list is not None:
                     st.dataframe(df)
 else:
     st.info("GitHub에서 '대학교별 코드.xlsx' 파일을 불러오는 데 실패했습니다. URL을 확인해 주세요.")
+
 
 
