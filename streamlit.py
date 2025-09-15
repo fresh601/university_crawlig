@@ -190,9 +190,16 @@ else:
                 status_placeholder.info("PDF 크롤링 중...")
                 st.session_state.pdf_buffers = extract_and_download_pdfs(unv_cd, search_year, selected_univ)
 
-            # ===== 화면 표시: 전형별로 묶어서 주요사항 -> 입시결과 =====
-            type_order = ["학생부종합", "학생부교과", "수능"]
-            for type_name in type_order:
+            # ===== 화면 표시: 전형별 헤더 → 주요사항 → 입시결과 =====
+            type_order = [
+                ("학생부종합", "학생부종합전형"),
+                ("학생부교과", "학생부교과전형"),
+                ("수능", "수능위주전형")
+            ]
+
+            for type_name, header_name in type_order:
+                st.markdown(f"## {header_name}")  # 전형 헤더
+
                 # 주요사항
                 main_name = f"{type_name}(주요사항)"
                 if main_name in st.session_state.admission_data:
@@ -200,17 +207,17 @@ else:
                     df_main = st.session_state.admission_data[main_name]
                     st.dataframe(wrap_long_text(df_main, max_len=50), use_container_width=True)
 
-                # 입시결과
+                # 입시결과 (이름 바꾸기)
                 result_name = type_name
                 if result_name in st.session_state.admission_data:
-                    st.markdown(f"### {result_name}")
+                    st.markdown(f"### {result_name}(입시결과)")
                     df_result = st.session_state.admission_data[result_name]
                     st.dataframe(wrap_long_text(df_result, max_len=50), use_container_width=True)
 
             # ===== 입시결과 Excel 다운로드 =====
             excel_buffer = BytesIO()
             with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
-                for type_name in type_order:
+                for type_name, _ in type_order:
                     main_name = f"{type_name}(주요사항)"
                     if main_name in st.session_state.admission_data:
                         st.session_state.admission_data[main_name].to_excel(
@@ -236,11 +243,15 @@ else:
                     for label, (content, fname) in st.session_state.pdf_buffers.items():
                         st.download_button(
                             label=f"📄 {label} 다운로드",
-                            data=content,
-                            file_name=fname,
-                            mime="application/pdf"
-                        )
+                           
+
+                                                st.download_button(
+                        label=f"📄 {label} 다운로드",
+                        data=content,
+                        file_name=fname,
+                        mime="application/pdf"
+                    )
                 else:
                     st.warning("모집요강 PDF가 없습니다.")
 
-            status_placeholder.success("크롤링 완료! ✅")
+            st.success("크롤링 완료! ✅")
