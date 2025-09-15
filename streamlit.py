@@ -30,10 +30,11 @@ def wrap_long_text(df, max_len=50):
     df_wrapped = df.copy()
     for col in df_wrapped.columns:
         df_wrapped[col] = df_wrapped[col].apply(
-            lambda x: "\n".join([str(x)[i:i+max_len] for i in range(0, len(str(x)), max_len)]))
+            lambda x: "\n".join([str(x)[i:i+max_len] for i in range(0, len(str(x)), max_len)])
+        )
     return df_wrapped
 
-# ===== 입시결과 크롤링 설정 =====
+# ===== 입시결과 크롤링 =====
 cookies = {
     'WMONID': 'NYfDEAkX3Jy',
     'JSESSIONID': 'V9Tor4qz9JI1R0wOWXqKXhcJbeLiyXWdTSgfWj1hzo1aRGbUlCTAoSQSWOuxxFFK.amV1c19kb21haW4vYWRpZ2Ex',
@@ -59,7 +60,6 @@ types_main = {
     "수능(주요사항)": {"upcd": "40", "cd": "41"},
 }
 
-# ===== 크롤링 함수 =====
 def crawl_admission_results_chunk(unv_cd, search_syr, name, codes):
     sheet_data = {}
     data = {
@@ -140,24 +140,31 @@ def extract_and_download_files(unv_cd, search_syr, univ_name):
             }
             r = requests.get(DOWNLOAD_URL, params=params_file, headers=headers_file, timeout=60)
             if r.status_code == 200:
-                content = r.content
-                # 시그니처 기반 확장자 판정
-                if content[:4] == b'%PDF':
+                # 서버 파일 시그니처 기반 확장자 판정
+                content_type = r.headers.get("Content-Type", "")
+                if "pdf" in content_type.lower() or fname_text.lower().endswith(".pdf"):
                     ext = ".pdf"
                     mime_type = "application/pdf"
-                elif b"HWP Document" in content[:1024]:
+                elif "hwp" in content_type.lower() or fname_text.lower().endswith(".hwp"):
                     ext = ".hwp"
                     mime_type = "application/x-hwp"
                 else:
                     ext = ".bin"
                     mime_type = "application/octet-stream"
                 fname = sanitize_filename(f"{univ_name}_{label}_모집요강{ext}")
-                file_buffers[label] = (content, fname, mime_type)
+                file_buffers[label] = (r.content, fname, mime_type)
     return file_buffers
 
 # ===== Streamlit UI =====
 st.set_page_config(layout="wide")
 st.title("대학 입시자료 조회 및 다운로드")
+
+# 세션 초기화 조건: 학년도 또는 대학 선택 변경 시
+if ("last_search_year" in st.session_state and st.session_state.last_search_year != SEARCH_YEAR_DEFAULT) or \
+   ("last_selected_univ" in st.session_state and st.session_state.last_selected_univ != ""):
+    for key in ["admission_data", "file_buffers", "last_search_year", "last_selected_univ"]:
+        if key in st.session_state:
+            del st.session_state[key]
 
 if not os.path.exists(UNIV_LIST_PATH):
     st.error(f"{UNIV_LIST_PATH} 파일이 없습니다. 깃허브에 포함시켜주세요.")
@@ -168,21 +175,17 @@ else:
     else:
         univ_list = df["학교명"].tolist()
 
-        # ===== 사이드바 =====
+        # 사이드바
         with st.sidebar:
             search_year = st.number_input("학년도 입력", min_value=2000, max_value=2100,
-                                          value=SEARCH_YEAR_DEFAULT, step=1, key="year_input")
-            selected_univ = st.selectbox("대학 선택", univ_list, key="univ_input")
+                                          value=SEARCH_YEAR_DEFAULT, step=1)
+            selected_univ = st.selectbox("대학 선택", univ_list)
             types_options = ["전체"] + list(types_results.keys()) + list(types_main.keys())
-            selected_type = st.selectbox("전형 선택", types_options, key="type_input")
+            selected_type = st.selectbox("전형 선택", types_options)
 
-        # ===== 세션 초기화 (학년도/대학 변경 시) =====
-        if ("last_year" not in st.session_state or st.session_state.last_year != search_year or
-            "last_univ" not in st.session_state or st.session_state.last_univ != selected_univ):
-            st.session_state.pop("admission_data", None)
-            st.session_state.pop("file_buffers", None)
-            st.session_state.last_year = search_year
-            st.session_state.last_univ = selected_univ
+        # 세션에 마지막 선택값 저장
+        st.session_state.last_search_year = search_year
+        st.session_state.last_selected_univ = selected_univ
 
         # ===== Placeholder 준비 =====
         top_container = st.container()
@@ -192,12 +195,25 @@ else:
 
         if st.button("크롤링 시작"):
 
-            row = df[df["학교명"] == selected_univ].iloc[0]
-            unv_cd = str(row["코드번호"]).zfill(7)
+            # 전형 선택에 따라 크롤링 대상 결정
+            if selected_type == "전체":
+                all_types = {**types_main, **types_results}
+            elif selected_type in types_main:
+                all_types = {selected_type: types_main[selected_type]}
+            elif selected_type in types_results:
+                all_types = {selected_type: types_results[selected_type]}
+            else:
+                all_types = {}
+
+            # 세션 초기화
             st.session_state.admission_data = {}
             st.session_state.file_buffers = {}
 
-            all_types = {**types_main, **types_results}  # 주요사항 먼저
+            # 대학 코드 가져오기
+            row = df[df["학교명"] == selected_univ].iloc[0]
+            unv_cd = str(row["코드번호"]).zfill(7)
+
+            # 크롤링
             total = len(all_types)
             for i, (name, codes) in enumerate(all_types.items(), 1):
                 status_placeholder.info(f"{name} 크롤링 중... ({i}/{total})")
@@ -208,11 +224,7 @@ else:
             status_placeholder.info("파일 크롤링 중...")
             st.session_state.file_buffers = extract_and_download_files(unv_cd, search_year, selected_univ)
 
-            st.success("크롤링 완료! ✅")
-
-        # ===== 화면 표시: 전형별 주요사항/결과 =====
-        if "admission_data" in st.session_state:
-
+            # ===== 화면 표시: 전형별 헤더 → 2026학년도 주요사항 → 2025학년도 입시결과 =====
             type_order = [
                 ("학생부종합", "2️⃣ 학생부종합전형"),
                 ("학생부교과", "3️⃣ 학생부교과전형"),
@@ -220,21 +232,23 @@ else:
             ]
 
             for type_name, header_name in type_order:
-                st.markdown(f"## {header_name}")  # 전형 헤더
+                # 크롤링된 데이터가 있어야 화면에 표시
+                if any(k.startswith(type_name) for k in st.session_state.admission_data.keys()):
+                    st.markdown(f"## {header_name}")  # 전형 헤더
 
-                # 2026학년도 주요사항
-                main_name = f"{type_name}(주요사항)"
-                if main_name in st.session_state.admission_data:
-                    st.markdown(f"### 📌 {search_year}학년도 전형별 주요사항")
-                    df_main = st.session_state.admission_data[main_name]
-                    st.dataframe(wrap_long_text(df_main, max_len=50), use_container_width=True)
+                    # 2026학년도 주요사항
+                    main_name = f"{type_name}(주요사항)"
+                    if main_name in st.session_state.admission_data:
+                        st.markdown(f"### 📌 {search_year}학년도 전형별 주요사항")
+                        df_main = st.session_state.admission_data[main_name]
+                        st.dataframe(wrap_long_text(df_main, max_len=50), use_container_width=True)
 
-                # 2025학년도 입시결과
-                result_name = type_name
-                if result_name in st.session_state.admission_data:
-                    st.markdown(f"### 📊 {search_year-1}학년도 전형 결과")
-                    df_result = st.session_state.admission_data[result_name]
-                    st.dataframe(wrap_long_text(df_result, max_len=50), use_container_width=True)
+                    # 2025학년도 입시결과
+                    result_name = type_name
+                    if result_name in st.session_state.admission_data:
+                        st.markdown(f"### 📊 {search_year-1}학년도 전형 결과")
+                        df_result = st.session_state.admission_data[result_name]
+                        st.dataframe(wrap_long_text(df_result, max_len=50), use_container_width=True)
 
             # ===== Excel 다운로드 =====
             excel_buffer = BytesIO()
@@ -271,3 +285,5 @@ else:
                         )
                 else:
                     st.warning("모집요강 파일이 없습니다.")
+
+            st.success("크롤링 완료! ✅")
