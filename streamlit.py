@@ -94,6 +94,7 @@ def crawl_admission_results_chunk(unv_cd, search_syr, name, codes):
         st.warning(f"{name} 크롤링 실패: {e}")
     return sheet_data
 
+# ===== 모집요강 다운로드 (바이너리 기반 판정 적용) =====
 def extract_and_download_files(unv_cd, search_syr, univ_name):
     plan_ids = susi_ids = jeongsi_ids = None
     params = {"menuId": MENU_ID, "unvCd": unv_cd, "searchSyr": search_syr}
@@ -120,6 +121,7 @@ def extract_and_download_files(unv_cd, search_syr, univ_name):
                 susi_ids = (file_id, file_sn, text)
             elif ("정시" in text) and ("모집요강" in text):
                 jeongsi_ids = (file_id, file_sn, text)
+
     file_buffers = {}
     for label, ids in [("시행계획", plan_ids), ("수시", susi_ids), ("정시", jeongsi_ids)]:
         if ids:
@@ -140,10 +142,20 @@ def extract_and_download_files(unv_cd, search_syr, univ_name):
             }
             r = requests.get(DOWNLOAD_URL, params=params_file, headers=headers_file, timeout=60)
             if r.status_code == 200:
-                ext = ".pdf" if "pdf" in fname_text.lower() else ".hwp"
-                mime_type = "application/pdf" if ext == ".pdf" else "application/x-hwp"
+                content = r.content
+                # --- 실제 바이너리 기반 확장자 판정 ---
+                if content.startswith(b"%PDF"):
+                    ext = ".pdf"
+                    mime_type = "application/pdf"
+                elif content.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1") or b"HWP Document" in content[:256]:
+                    ext = ".hwp"
+                    mime_type = "application/x-hwp"
+                else:
+                    ext = ".hwp"
+                    mime_type = "application/octet-stream"
+
                 fname = sanitize_filename(f"{univ_name}_{label}_모집요강{ext}")
-                file_buffers[label] = (r.content, fname, mime_type)
+                file_buffers[label] = (content, fname, mime_type)
     return file_buffers
 
 # ===== Streamlit UI =====
@@ -167,7 +179,7 @@ else:
             types_options = ["전체"] + list(types_results.keys()) + list(types_main.keys())
             selected_type = st.selectbox("전형 선택", types_options)
 
-        # ===== 세션 초기화: 학년/대학/전형 변경 시 =====
+        # ===== 세션 초기화 =====
         if ("selected_univ_prev" not in st.session_state or
             st.session_state.selected_univ_prev != selected_univ or
             st.session_state.get("search_year_prev", None) != search_year or
@@ -225,14 +237,14 @@ else:
                     f"{type_name}(주요사항)" in st.session_state.admission_data):
                     st.markdown(f"## {header_name}")
 
-                    # 2026학년도 주요사항
+                    # 주요사항
                     main_name = f"{type_name}(주요사항)"
                     if main_name in st.session_state.admission_data:
                         st.markdown(f"### 📌 {search_year}학년도 전형별 주요사항")
                         df_main = st.session_state.admission_data[main_name]
                         st.dataframe(wrap_long_text(df_main, max_len=50), use_container_width=True)
 
-                    # 2025학년도 입시결과
+                    # 입시결과
                     result_name = type_name
                     if result_name in st.session_state.admission_data:
                         st.markdown(f"### 📊 {search_year-1}학년도 전형 결과")
