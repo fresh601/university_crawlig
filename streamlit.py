@@ -210,7 +210,7 @@ else:
                 # 입시결과
                 result_name = type_name
                 if result_name in st.session_state.admission_data:
-                    st.markdown(f"### {result_name} ({search_year-1}학년도)"")
+                    st.markdown(f"### {result_name} ({search_year-1}학년도)")
                     df_result = st.session_state.admission_data[result_name]
                     st.dataframe(wrap_long_text(df_result, max_len=50), use_container_width=True)
 
@@ -251,6 +251,7 @@ else:
                     st.warning("모집요강 PDF가 없습니다.")
 
             st.success("크롤링 완료! ✅")
+
 
 
 
