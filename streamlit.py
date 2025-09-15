@@ -140,8 +140,17 @@ def extract_and_download_files(unv_cd, search_syr, univ_name):
             }
             r = requests.get(DOWNLOAD_URL, params=params_file, headers=headers_file, timeout=60)
             if r.status_code == 200:
-                ext = ".pdf" if "pdf" in fname_text.lower() else ".hwp"
-                mime_type = "application/pdf" if ext == ".pdf" else "application/x-hwp"
+                # Content-Type 기반 확장자/MIME 결정
+                content_type = r.headers.get("Content-Type", "").lower()
+                if "pdf" in content_type:
+                    ext = ".pdf"
+                    mime_type = "application/pdf"
+                elif "hwp" in content_type:
+                    ext = ".hwp"
+                    mime_type = "application/x-hwp"
+                else:
+                    ext = ".bin"
+                    mime_type = "application/octet-stream"
                 fname = sanitize_filename(f"{univ_name}_{label}_모집요강{ext}")
                 file_buffers[label] = (r.content, fname, mime_type)
     return file_buffers
@@ -161,11 +170,22 @@ else:
 
         # 사이드바
         with st.sidebar:
-            search_year = st.number_input("학년도 입력", min_value=2000, max_value=2100,
-                                          value=SEARCH_YEAR_DEFAULT, step=1)
-            selected_univ = st.selectbox("대학 선택", univ_list)
+            new_search_year = st.number_input("학년도 입력", min_value=2000, max_value=2100,
+                                             value=SEARCH_YEAR_DEFAULT, step=1)
+            new_selected_univ = st.selectbox("대학 선택", univ_list)
             types_options = ["전체"] + list(types_results.keys()) + list(types_main.keys())
-            selected_type = st.selectbox("전형 선택", types_options)
+            new_selected_type = st.selectbox("전형 선택", types_options)
+
+        # 학년도 또는 대학 변경 시 세션 초기화
+        if ("last_year" not in st.session_state or st.session_state.last_year != new_search_year or
+            "last_univ" not in st.session_state or st.session_state.last_univ != new_selected_univ):
+            st.session_state.admission_data = {}
+            st.session_state.file_buffers = {}
+            st.session_state.last_year = new_search_year
+            st.session_state.last_univ = new_selected_univ
+
+        search_year = new_search_year
+        selected_univ = new_selected_univ
 
         # ===== Placeholder 준비 =====
         top_container = st.container()
@@ -173,13 +193,11 @@ else:
         status_placeholder = st.empty()
         progress_bar = st.progress(0)
 
-        if st.button("크롤링 시작") or "admission_data" in st.session_state:
+        if st.button("크롤링 시작"):
 
-            if "admission_data" not in st.session_state:
+            if not st.session_state.admission_data:
                 row = df[df["학교명"] == selected_univ].iloc[0]
                 unv_cd = str(row["코드번호"]).zfill(7)
-                st.session_state.admission_data = {}
-                st.session_state.file_buffers = {}
 
                 all_types = {**types_main, **types_results}  # 주요사항 먼저
                 total = len(all_types)
@@ -253,5 +271,3 @@ else:
                     st.warning("모집요강 파일이 없습니다.")
 
             st.success("크롤링 완료! ✅")
-
-
