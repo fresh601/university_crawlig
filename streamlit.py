@@ -14,7 +14,7 @@ DETAIL_URL = f"{BASE}/ucp/uvt/uni/univDetail.do"
 DOWNLOAD_URL = f"{BASE}/cmm/com/file/fileDown.do"
 MENU_ID = "PCUVTINF2000"
 SEARCH_YEAR_DEFAULT = 2026
-UNIV_LIST_PATH = "대학교별 코드.xlsx"  # 깃허브에 포함될 파일
+UNIV_LIST_PATH = "대학교별 코드.xlsx"
 
 # ===== 유틸 함수 =====
 def sanitize_filename(name: str) -> str:
@@ -166,10 +166,9 @@ else:
             selected_type = st.selectbox("전형 선택", types_options)
 
         # ===== Placeholder 준비 =====
-        top_container = st.container()   # 주요사항
-        bottom_container = st.container() # 입시결과
-        pdf_container = st.container()    # PDF 다운로드
-        status_placeholder = st.empty()   # 상태 메시지 placeholder
+        top_container = st.container()
+        pdf_container = st.container()
+        status_placeholder = st.empty()
         progress_bar = st.progress(0)
 
         if st.button("크롤링 시작") or "admission_data" in st.session_state:
@@ -180,55 +179,55 @@ else:
                 st.session_state.admission_data = {}
                 st.session_state.pdf_buffers = {}
 
-                all_types = {**types_results, **types_main}
+                all_types = {**types_main, **types_results}  # 주요사항 먼저
                 total = len(all_types)
                 for i, (name, codes) in enumerate(all_types.items(), 1):
                     status_placeholder.info(f"{name} 크롤링 중... ({i}/{total})")
                     data_chunk = crawl_admission_results_chunk(unv_cd, search_year, name, codes)
                     st.session_state.admission_data.update(data_chunk)
-
                     progress_bar.progress(i / total)
 
                 status_placeholder.info("PDF 크롤링 중...")
                 st.session_state.pdf_buffers = extract_and_download_pdfs(unv_cd, search_year, selected_univ)
 
-            # ===== 화면 표시 =====
-            with top_container:
-                if any("주요사항" in name for name in st.session_state.admission_data.keys()):
-                    st.header("주요사항")
-                    for sheet_name, df_sheet in st.session_state.admission_data.items():
-                        if "주요사항" not in sheet_name:
-                            continue
-                        if selected_type != "전체" and selected_type != sheet_name:
-                            continue
-                        st.markdown(f"**{sheet_name}**")
-                        st.dataframe(wrap_long_text(df_sheet, max_len=50), use_container_width=True)
+            # ===== 화면 표시: 전형별로 묶어서 주요사항 -> 입시결과 =====
+            type_order = ["학생부종합", "학생부교과", "수능"]
+            for type_name in type_order:
+                # 주요사항
+                main_name = f"{type_name}(주요사항)"
+                if main_name in st.session_state.admission_data:
+                    st.markdown(f"### {main_name}")
+                    df_main = st.session_state.admission_data[main_name]
+                    st.dataframe(wrap_long_text(df_main, max_len=50), use_container_width=True)
 
-            with bottom_container:
-                if any("주요사항" not in name for name in st.session_state.admission_data.keys()):
-                    st.header("입시결과")
-                    for sheet_name, df_sheet in st.session_state.admission_data.items():
-                        if "주요사항" in sheet_name:
-                            continue
-                        if selected_type != "전체" and selected_type != sheet_name:
-                            continue
-                        st.markdown(f"**{sheet_name}**")
-                        st.dataframe(wrap_long_text(df_sheet, max_len=50), use_container_width=True)
+                # 입시결과
+                result_name = type_name
+                if result_name in st.session_state.admission_data:
+                    st.markdown(f"### {result_name}")
+                    df_result = st.session_state.admission_data[result_name]
+                    st.dataframe(wrap_long_text(df_result, max_len=50), use_container_width=True)
 
-                    # ===== 입시결과 Excel 다운로드 버튼 =====
-                    excel_buffer = BytesIO()
-                    with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
-                        for sheet_name, df_sheet in st.session_state.admission_data.items():
-                            if selected_type != "전체" and selected_type != sheet_name:
-                                continue
-                            df_sheet.to_excel(writer, sheet_name=sheet_name[:31], index=False, header=False)
-                    excel_buffer.seek(0)
-                    st.download_button(
-                        label="📥 입시결과 다운로드",
-                        data=excel_buffer,
-                        file_name=f"{sanitize_filename(selected_univ)}_{search_year-1}년_대학입시결과.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
+            # ===== 입시결과 Excel 다운로드 =====
+            excel_buffer = BytesIO()
+            with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
+                for type_name in type_order:
+                    main_name = f"{type_name}(주요사항)"
+                    if main_name in st.session_state.admission_data:
+                        st.session_state.admission_data[main_name].to_excel(
+                            writer, sheet_name=sanitize_filename(main_name)[:31], index=False, header=False
+                        )
+                    result_name = type_name
+                    if result_name in st.session_state.admission_data:
+                        st.session_state.admission_data[result_name].to_excel(
+                            writer, sheet_name=sanitize_filename(result_name)[:31], index=False, header=False
+                        )
+            excel_buffer.seek(0)
+            st.download_button(
+                label="📥 입시결과 다운로드",
+                data=excel_buffer,
+                file_name=f"{sanitize_filename(selected_univ)}_{search_year-1}년_대학입시결과.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
             # ===== PDF 다운로드 =====
             with pdf_container:
