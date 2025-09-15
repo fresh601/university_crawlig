@@ -173,6 +173,7 @@ else:
         progress_bar = st.progress(0)
 
         if st.button("크롤링 시작") or "admission_data" in st.session_state:
+
             if "admission_data" not in st.session_state:
                 row = df[df["학교명"] == selected_univ].iloc[0]
                 unv_cd = str(row["코드번호"]).zfill(7)
@@ -186,44 +187,50 @@ else:
                     data_chunk = crawl_admission_results_chunk(unv_cd, search_year, name, codes)
                     st.session_state.admission_data.update(data_chunk)
 
-                    for sheet_name, df_sheet in data_chunk.items():
-                        if selected_type != "전체" and selected_type != sheet_name:
-                            continue
-                        if "주요사항" in sheet_name:
-                            with top_container:
-                                if i == 1:
-                                    st.header("주요사항")
-                                st.markdown(f"**{sheet_name}**")
-                                st.dataframe(wrap_long_text(df_sheet, max_len=50), use_container_width=True)
-                        else:
-                            with bottom_container:
-                                if i == 1:
-                                    st.header("입시결과")
-                                st.markdown(f"**{sheet_name}**")
-                                st.dataframe(wrap_long_text(df_sheet, max_len=50), use_container_width=True)
-
                     progress_bar.progress(i / total)
 
                 status_placeholder.info("PDF 크롤링 중...")
                 st.session_state.pdf_buffers = extract_and_download_pdfs(unv_cd, search_year, selected_univ)
 
-            # ===== 입시결과 Excel 다운로드 버튼 =====
-            with bottom_container:
-                excel_buffer = BytesIO()
-                with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
+            # ===== 화면 표시 =====
+            with top_container:
+                if any("주요사항" in name for name in st.session_state.admission_data.keys()):
+                    st.header("주요사항")
                     for sheet_name, df_sheet in st.session_state.admission_data.items():
+                        if "주요사항" not in sheet_name:
+                            continue
                         if selected_type != "전체" and selected_type != sheet_name:
                             continue
-                        df_sheet.to_excel(writer, sheet_name=sheet_name[:31], index=False, header=False)
-                excel_buffer.seek(0)
-                st.download_button(
-                    label="📥 입시결과 다운로드",
-                    data=excel_buffer,
-                    file_name=f"{sanitize_filename(selected_univ)}_{search_year-1}년_대학입시결과.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+                        st.markdown(f"**{sheet_name}**")
+                        st.dataframe(wrap_long_text(df_sheet, max_len=50), use_container_width=True)
 
-            # PDF 다운로드
+            with bottom_container:
+                if any("주요사항" not in name for name in st.session_state.admission_data.keys()):
+                    st.header("입시결과")
+                    for sheet_name, df_sheet in st.session_state.admission_data.items():
+                        if "주요사항" in sheet_name:
+                            continue
+                        if selected_type != "전체" and selected_type != sheet_name:
+                            continue
+                        st.markdown(f"**{sheet_name}**")
+                        st.dataframe(wrap_long_text(df_sheet, max_len=50), use_container_width=True)
+
+                    # ===== 입시결과 Excel 다운로드 버튼 =====
+                    excel_buffer = BytesIO()
+                    with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
+                        for sheet_name, df_sheet in st.session_state.admission_data.items():
+                            if selected_type != "전체" and selected_type != sheet_name:
+                                continue
+                            df_sheet.to_excel(writer, sheet_name=sheet_name[:31], index=False, header=False)
+                    excel_buffer.seek(0)
+                    st.download_button(
+                        label="📥 입시결과 다운로드",
+                        data=excel_buffer,
+                        file_name=f"{sanitize_filename(selected_univ)}_{search_year-1}년_대학입시결과.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+
+            # ===== PDF 다운로드 =====
             with pdf_container:
                 if st.session_state.pdf_buffers:
                     st.markdown("### 모집요강 PDF 다운로드")
