@@ -61,9 +61,6 @@ types_main = {
 }
 
 def crawl_admission_results_chunk(unv_cd, search_syr, name, codes):
-    """
-    전형별로 점진적 크롤링: 한 번에 한 전형만 크롤링
-    """
     sheet_data = {}
     data = {
         '_csrf': headers['X-CSRF-TOKEN'],
@@ -173,6 +170,8 @@ else:
         top_container = st.container()   # 주요사항
         bottom_container = st.container() # 입시결과
         pdf_container = st.container()    # PDF 다운로드
+        status_placeholder = st.empty()   # 상태 메시지 placeholder
+        progress_bar = st.progress(0)
 
         # 버튼 클릭 후 크롤링
         if st.button("크롤링 시작") or "admission_data" in st.session_state:
@@ -182,20 +181,18 @@ else:
                 row = df[df["학교명"] == selected_univ].iloc[0]
                 unv_cd = str(row["코드번호"]).zfill(7)
 
-                st.info(f"{selected_univ} 입시자료 로딩 중... ⏳")
                 st.session_state.admission_data = {}  # 초기화
                 st.session_state.pdf_buffers = {}
 
-                # ===== 전형별로 점진적 크롤링 =====
+                # ===== 전형별 점진적 크롤링 =====
                 all_types = {**types_results, **types_main}
-                progress_bar = st.progress(0)
                 total = len(all_types)
                 for i, (name, codes) in enumerate(all_types.items(), 1):
-                    st.info(f"{name} 크롤링 중...")
+                    status_placeholder.info(f"{name} 크롤링 중... ({i}/{total})")
                     data_chunk = crawl_admission_results_chunk(unv_cd, search_year, name, codes)
                     st.session_state.admission_data.update(data_chunk)
 
-                    # 주요사항/입시결과를 바로 화면에 표시
+                    # 주요사항/입시결과 화면 표시
                     for sheet_name, df_sheet in data_chunk.items():
                         if selected_type != "전체" and selected_type != sheet_name:
                             continue
@@ -206,7 +203,7 @@ else:
 
                     progress_bar.progress(i / total)
 
-                # PDF 크롤링
+                status_placeholder.info("PDF 크롤링 중...")
                 st.session_state.pdf_buffers = extract_and_download_pdfs(unv_cd, search_year, selected_univ)
 
             # ===== 다운로드 버튼 =====
@@ -238,4 +235,4 @@ else:
                 else:
                     st.warning("모집요강 PDF가 없습니다.")
 
-            st.success("크롤링 완료! ✅")
+            status_placeholder.success("크롤링 완료! ✅")
