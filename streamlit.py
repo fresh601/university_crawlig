@@ -94,7 +94,7 @@ def crawl_admission_results_chunk(unv_cd, search_syr, name, codes):
         st.warning(f"{name} 크롤링 실패: {e}")
     return sheet_data
 
-def extract_and_download_pdfs(unv_cd, search_syr, univ_name):
+def extract_and_download_files(unv_cd, search_syr, univ_name):
     plan_ids = susi_ids = jeongsi_ids = None
     params = {"menuId": MENU_ID, "unvCd": unv_cd, "searchSyr": search_syr}
     headers_req = {"User-Agent": "Mozilla/5.0"}
@@ -115,15 +115,15 @@ def extract_and_download_pdfs(unv_cd, search_syr, univ_name):
                 continue
             file_id, file_sn = m.group(1), m.group(2)
             if ("대학입학전형" in text) and ("시행계획" in text):
-                plan_ids = (file_id, file_sn)
+                plan_ids = (file_id, file_sn, text)
             elif ("수시" in text) and ("모집요강" in text):
-                susi_ids = (file_id, file_sn)
+                susi_ids = (file_id, file_sn, text)
             elif ("정시" in text) and ("모집요강" in text):
-                jeongsi_ids = (file_id, file_sn)
-    pdf_buffers = {}
+                jeongsi_ids = (file_id, file_sn, text)
+    file_buffers = {}
     for label, ids in [("시행계획", plan_ids), ("수시", susi_ids), ("정시", jeongsi_ids)]:
         if ids:
-            f_id, f_sn = ids
+            f_id, f_sn, fname_text = ids
             params_file = {
                 "fileId": f_id,
                 "fileSn": f_sn,
@@ -140,9 +140,11 @@ def extract_and_download_pdfs(unv_cd, search_syr, univ_name):
             }
             r = requests.get(DOWNLOAD_URL, params=params_file, headers=headers_file, timeout=60)
             if r.status_code == 200:
-                fname = sanitize_filename(f"{univ_name}_{label}_모집요강.pdf")
-                pdf_buffers[label] = (r.content, fname)
-    return pdf_buffers
+                ext = ".pdf" if "pdf" in fname_text.lower() else ".hwp"
+                mime_type = "application/pdf" if ext == ".pdf" else "application/x-hwp"
+                fname = sanitize_filename(f"{univ_name}_{label}_모집요강{ext}")
+                file_buffers[label] = (r.content, fname, mime_type)
+    return file_buffers
 
 # ===== Streamlit UI =====
 st.set_page_config(layout="wide")
@@ -177,7 +179,7 @@ else:
                 row = df[df["학교명"] == selected_univ].iloc[0]
                 unv_cd = str(row["코드번호"]).zfill(7)
                 st.session_state.admission_data = {}
-                st.session_state.pdf_buffers = {}
+                st.session_state.file_buffers = {}
 
                 all_types = {**types_main, **types_results}  # 주요사항 먼저
                 total = len(all_types)
@@ -187,10 +189,10 @@ else:
                     st.session_state.admission_data.update(data_chunk)
                     progress_bar.progress(i / total)
 
-                status_placeholder.info("PDF 크롤링 중...")
-                st.session_state.pdf_buffers = extract_and_download_pdfs(unv_cd, search_year, selected_univ)
+                status_placeholder.info("파일 크롤링 중...")
+                st.session_state.file_buffers = extract_and_download_files(unv_cd, search_year, selected_univ)
 
-            # ===== 화면 표시: 전형별 헤더 → 주요사항 → 입시결과 =====
+            # ===== 화면 표시: 전형별 헤더 → 2026학년도 주요사항 → 2025학년도 입시결과 =====
             type_order = [
                 ("학생부종합", "2️⃣ 학생부종합전형"),
                 ("학생부교과", "3️⃣ 학생부교과전형"),
@@ -200,21 +202,21 @@ else:
             for type_name, header_name in type_order:
                 st.markdown(f"## {header_name}")  # 전형 헤더
 
-                # 🟢 검색학년도 전형별 주요사항
-                st.markdown(f"### 🟢 {search_year}학년도 전형별 주요사항")
+                # 2026학년도 주요사항
                 main_name = f"{type_name}(주요사항)"
                 if main_name in st.session_state.admission_data:
+                    st.markdown(f"### {search_year}학년도 전형별 주요사항")
                     df_main = st.session_state.admission_data[main_name]
                     st.dataframe(wrap_long_text(df_main, max_len=50), use_container_width=True)
 
-                # 🔵 검색학년도-1 전형 결과
-                st.markdown(f"### 🔵 {search_year-1}학년도 전형 결과")
+                # 2025학년도 입시결과
                 result_name = type_name
                 if result_name in st.session_state.admission_data:
+                    st.markdown(f"### {search_year-1}학년도 전형 결과")
                     df_result = st.session_state.admission_data[result_name]
                     st.dataframe(wrap_long_text(df_result, max_len=50), use_container_width=True)
 
-            # ===== 입시결과 Excel 다운로드 =====
+            # ===== Excel 다운로드 =====
             excel_buffer = BytesIO()
             with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
                 for type_name, _ in type_order:
@@ -236,19 +238,18 @@ else:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
-            # ===== PDF 다운로드 =====
+            # ===== PDF/HWP 다운로드 =====
             with pdf_container:
-                if st.session_state.pdf_buffers:
+                if st.session_state.file_buffers:
                     st.markdown("### 1️⃣ 모집요강 다운로드")
-                    for label, (content, fname) in st.session_state.pdf_buffers.items():
+                    for label, (content, fname, mime_type) in st.session_state.file_buffers.items():
                         st.download_button(
                             label=f"📄 {label} 다운로드",
                             data=content,
                             file_name=fname,
-                            mime="application/pdf"
+                            mime=mime_type
                         )
                 else:
-                    st.warning("모집요강이 없습니다.")
+                    st.warning("모집요강 파일이 없습니다.")
 
             st.success("크롤링 완료! ✅")
-
