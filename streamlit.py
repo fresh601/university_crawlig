@@ -14,7 +14,6 @@ DETAIL_URL = f"{BASE}/ucp/uvt/uni/univDetail.do"
 DOWNLOAD_URL = f"{BASE}/cmm/com/file/fileDown.do"
 MENU_ID = "PCUVTINF2000"
 SEARCH_YEAR_DEFAULT = 2026
-UNIV_LIST_PATH = "대학교별 코드.xlsx"  # 깃허브에 포함될 파일
 
 # ===== 유틸 함수 =====
 def sanitize_filename(name: str) -> str:
@@ -26,7 +25,6 @@ def sanitize_filename(name: str) -> str:
 def norm_text(el) -> str:
     return ' '.join(el.get_text(separator=' ', strip=True).split())
 
-# ===== 긴 문자열 자동 줄바꿈 =====
 def wrap_long_text(df, max_len=50):
     df_wrapped = df.copy()
     for col in df_wrapped.columns:
@@ -35,7 +33,19 @@ def wrap_long_text(df, max_len=50):
         )
     return df_wrapped
 
-# ===== 입시결과 크롤링 =====
+# ===== 전형별 코드 =====
+types_results = {
+    "학생부종합": {"upcd": "20", "cd": "22"},
+    "학생부교과": {"upcd": "30", "cd": "32"},
+    "수능": {"upcd": "40", "cd": "42"},
+}
+types_main = {
+    "학생부종합(주요사항)": {"upcd": "20", "cd": "21"},
+    "학생부교과(주요사항)": {"upcd": "30", "cd": "31"},
+    "수능(주요사항)": {"upcd": "40", "cd": "41"},
+}
+
+# ===== 요청 헤더 / 쿠키 =====
 cookies = {
     'WMONID': 'NYfDEAkX3Jy',
     'JSESSIONID': 'V9Tor4qz9JI1R0wOWXqKXhcJbeLiyXWdTSgfWj1hzo1aRGbUlCTAoSQSWOuxxFFK.amV1c19kb21haW4vYWRpZ2Ex',
@@ -50,52 +60,32 @@ headers = {
     'X-Requested-With': 'XMLHttpRequest',
 }
 
-types_results = {
-    "학생부종합": {"upcd": "20", "cd": "22"},
-    "학생부교과": {"upcd": "30", "cd": "32"},
-    "수능": {"upcd": "40", "cd": "42"},
-}
-types_main = {
-    "학생부종합(주요사항)": {"upcd": "20", "cd": "21"},
-    "학생부교과(주요사항)": {"upcd": "30", "cd": "31"},
-    "수능(주요사항)": {"upcd": "40", "cd": "41"},
-}
+# ===== Streamlit UI =====
+st.set_page_config(layout="wide")
+st.title("대학 입시자료 조회 및 다운로드")
 
+# ===== GitHub에서 대학 목록 로드 =====
 @st.cache_data(show_spinner=False)
-def crawl_admission_results(unv_cd, search_syr):
-    sheet_data = {}
-    for name, codes in {**types_results, **types_main}.items():
-        data = {
-            '_csrf': headers['X-CSRF-TOKEN'],
-            'searchSyr': search_syr,
-            'unvCd': str(unv_cd).zfill(7),
-            'compUnvCd': '',
-            'searchUnvComp': '0',
-            'tsrdCmphSlcnArtclUpCd': codes['upcd'],
-            'tsrdCmphSlcnArtclCd': codes['cd'],
-        }
-        try:
-            response = requests.post(
-                'https://www.adiga.kr/uct/acd/ade/criteriaAndResultItemAjax.do',
-                cookies=cookies, headers=headers, data=data, timeout=30
-            )
-            time.sleep(0.2)
-            soup = BeautifulSoup(response.text, 'lxml')
-            tables = soup.find_all('table')
-            df_list = []
-            for table in tables:
-                try:
-                    df_table = pd.read_html(StringIO(str(table)), flavor='lxml')[0]
-                    df_list.append(df_table)
-                    df_list.append(pd.DataFrame([['' for _ in range(df_table.shape[1])]]))
-                except:
-                    continue
-            if df_list:
-                combined_df = pd.concat(df_list, ignore_index=True)
-                sheet_data[name] = combined_df
-        except Exception as e:
-            st.warning(f"{name} 크롤링 실패: {e}")
-    return sheet_data
+def load_university_list(github_url):
+    response = requests.get(github_url)
+    response.raise_for_status()
+    file_bytes = BytesIO(response.content)
+    df = pd.read_excel(file_bytes, engine='openpyxl')
+    df = df.dropna(subset=[df.columns[0], df.columns[1]])
+    return df
+
+# GitHub 파일 URL
+GITHUB_URL = "https://raw.githubusercontent.com/사용자명/저장소명/브랜치/대학교별 코드.xlsx"
+
+df = load_university_list(GITHUB_URL)
+univ_list = df["학교명"].tolist()
+
+# 사이드바
+with st.sidebar:
+    search_year = st.number_input("학년도 입력", min_value=2000, max_value=2100, value=SEARCH_YEAR_DEFAULT, step=1)
+    selected_univ = st.selectbox("대학 선택", univ_list)
+    types_options = ["전체"] + list(types_results.keys()) + list(types_main.keys())
+    selected_type = st.selectbox("전형 선택", types_options)
 
 # ===== 모집요강 PDF 다운로드 =====
 @st.cache_data(show_spinner=False)
@@ -149,89 +139,113 @@ def extract_and_download_pdfs(unv_cd, search_syr, univ_name):
                 pdf_buffers[label] = (r.content, fname)
     return pdf_buffers
 
-# ===== Streamlit UI =====
-st.set_page_config(layout="wide")
-st.title("대학 입시자료 조회 및 다운로드")
-
-# ===== 대학 목록 불러오기 =====
-if not os.path.exists(UNIV_LIST_PATH):
-    st.error(f"{UNIV_LIST_PATH} 파일이 없습니다. 깃허브에 포함시켜주세요.")
-else:
-    df = pd.read_excel(UNIV_LIST_PATH)
-    if "코드번호" not in df.columns or "학교명" not in df.columns:
-        st.error("'코드번호'와 '학교명' 열이 필요합니다.")
+# ===== 전형별 입시자료 크롤링 =====
+def crawl_admission_result_single(unv_cd, search_syr, sheet_name):
+    if sheet_name in types_main:
+        codes = types_main[sheet_name]
+    elif sheet_name in types_results:
+        codes = types_results[sheet_name]
     else:
-        univ_list = df["학교명"].tolist()
+        return None
+    data = {
+        '_csrf': headers['X-CSRF-TOKEN'],
+        'searchSyr': search_syr,
+        'unvCd': str(unv_cd).zfill(7),
+        'compUnvCd': '',
+        'searchUnvComp': '0',
+        'tsrdCmphSlcnArtclUpCd': codes['upcd'],
+        'tsrdCmphSlcnArtclCd': codes['cd'],
+    }
+    try:
+        response = requests.post(
+            'https://www.adiga.kr/uct/acd/ade/criteriaAndResultItemAjax.do',
+            cookies=cookies, headers=headers, data=data, timeout=30
+        )
+        time.sleep(0.2)
+        soup = BeautifulSoup(response.text, 'lxml')
+        tables = soup.find_all('table')
+        df_list = []
+        for table in tables:
+            try:
+                df_table = pd.read_html(StringIO(str(table)), flavor='lxml')[0]
+                df_list.append(df_table)
+                df_list.append(pd.DataFrame([['' for _ in range(df_table.shape[1])]]))
+            except:
+                continue
+        if df_list:
+            combined_df = pd.concat(df_list, ignore_index=True)
+            return combined_df
+        else:
+            return None
+    except Exception as e:
+        st.warning(f"{sheet_name} 크롤링 실패: {e}")
+        return None
 
-        # 사이드바
-        with st.sidebar:
-            search_year = st.number_input("학년도 입력", min_value=2000, max_value=2100,
-                                          value=SEARCH_YEAR_DEFAULT, step=1)
-            selected_univ = st.selectbox("대학 선택", univ_list)
-            types_options = ["전체"] + list(types_results.keys()) + list(types_main.keys())
-            selected_type = st.selectbox("전형 선택", types_options)
+# ===== 버튼 클릭 후 크롤링 시작 =====
+if st.button("크롤링 시작"):
+    row = df[df["학교명"] == selected_univ].iloc[0]
+    unv_cd = str(row["코드번호"]).zfill(7)
 
-        # 버튼 클릭 후 크롤링
-        if st.button("크롤링 시작"):
-            row = df[df["학교명"] == selected_univ].iloc[0]
-            unv_cd = str(row["코드번호"]).zfill(7)
+    st.info(f"{selected_univ} 입시자료 로딩 중... ⏳")
 
-            st.info(f"{selected_univ} 입시자료 로딩 중... ⏳")
-            admission_data = crawl_admission_results(unv_cd, search_year)
-            pdf_buffers = extract_and_download_pdfs(unv_cd, search_year, selected_univ)
+    # PDF 다운로드
+    pdf_buffers = extract_and_download_pdfs(unv_cd, search_year, selected_univ)
 
-            # ===== 오른쪽 화면 상/하 프레임 =====
-            top_container = st.container()   # 주요사항
-            bottom_container = st.container() # 입시결과
+    # ===== 오른쪽 화면 상/하 프레임 =====
+    top_container = st.container()   # 주요사항
+    bottom_container = st.container() # 입시결과
 
-            # 상단: 주요사항
-            with top_container:
-                st.subheader(f"📌 {search_year} 전형별 주요사항")
-                for sheet_name, df_sheet in admission_data.items():
-                    if "주요사항" not in sheet_name:
-                        continue
-                    if selected_type != "전체" and selected_type != sheet_name:
-                        continue
-                    st.markdown(f"**{sheet_name}**")
-                    df_to_show = wrap_long_text(df_sheet, max_len=50)
-                    st.dataframe(df_to_show, use_container_width=True)
+    # 상단: 주요사항
+    st.subheader(f"📌 {search_year} 전형별 주요사항")
+    for sheet_name in types_main.keys():
+        if selected_type != "전체" and selected_type != sheet_name:
+            continue
+        placeholder = top_container.empty()
+        df_sheet = crawl_admission_result_single(unv_cd, search_year, sheet_name)
+        if df_sheet is not None:
+            df_to_show = wrap_long_text(df_sheet, max_len=50)
+            placeholder.markdown(f"**{sheet_name}**")
+            placeholder.dataframe(df_to_show, use_container_width=True)
 
-            # 하단: 입시결과
-            with bottom_container:
-                st.subheader(f"📊 {search_year-1}학년도 입시결과")
-                for sheet_name, df_sheet in admission_data.items():
-                    if "주요사항" in sheet_name:
-                        continue
-                    if selected_type != "전체" and selected_type != sheet_name:
-                        continue
-                    st.markdown(f"**{sheet_name}**")
-                    st.dataframe(df_sheet, use_container_width=True)
+    # 하단: 입시결과
+    st.subheader(f"📊 {search_year-1}학년도 입시결과")
+    for sheet_name in types_results.keys():
+        if selected_type != "전체" and selected_type != sheet_name:
+            continue
+        placeholder = bottom_container.empty()
+        df_sheet = crawl_admission_result_single(unv_cd, search_year, sheet_name)
+        if df_sheet is not None:
+            placeholder.markdown(f"**{sheet_name}**")
+            placeholder.dataframe(df_sheet, use_container_width=True)
 
-            # Excel 다운로드
-            excel_buffer = BytesIO()
-            with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
-                for sheet_name, df_sheet in admission_data.items():
-                    if selected_type != "전체" and selected_type != sheet_name:
-                        continue
-                    df_sheet.to_excel(writer, sheet_name=sheet_name[:31], index=False, header=False)
-            excel_buffer.seek(0)
+    # Excel 다운로드
+    excel_buffer = BytesIO()
+    with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
+        for sheet_name in list(types_main.keys()) + list(types_results.keys()):
+            if selected_type != "전체" and selected_type != sheet_name:
+                continue
+            df_sheet = crawl_admission_result_single(unv_cd, search_year, sheet_name)
+            if df_sheet is not None:
+                df_sheet.to_excel(writer, sheet_name=sheet_name[:31], index=False, header=False)
+    excel_buffer.seek(0)
+    st.download_button(
+        label="📥 입시결과 다운로드",
+        data=excel_buffer,
+        file_name=f"{sanitize_filename(selected_univ)}_{search_year-1}년_대학입시결과.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+    # PDF 다운로드
+    if pdf_buffers:
+        st.markdown("### 모집요강 PDF 다운로드")
+        for label, (content, fname) in pdf_buffers.items():
             st.download_button(
-                label="📥 입시결과 다운로드",
-                data=excel_buffer,
-                file_name=f"{sanitize_filename(selected_univ)}_{search_year-1}년_대학입시결과.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                label=f"📄 {label} 다운로드",
+                data=content,
+                file_name=fname,
+                mime="application/pdf"
             )
+    else:
+        st.warning("모집요강 PDF가 없습니다.")
 
-            # PDF 다운로드
-            if pdf_buffers:
-                st.markdown("### 모집요강 PDF 다운로드")
-                for label, (content, fname) in pdf_buffers.items():
-                    st.download_button(
-                        label=f"📄 {label} 다운로드",
-                        data=content,
-                        file_name=fname,
-                        mime="application/pdf"
-                    )
-            else:
-                st.warning("모집요강 PDF가 없습니다.")
-            st.success("크롤링 완료! ✅")
+    st.success("크롤링 완료! ✅")
