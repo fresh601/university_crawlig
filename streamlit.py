@@ -207,7 +207,7 @@ else:
                     df_main = st.session_state.admission_data[main_name]
                     st.dataframe(wrap_long_text(df_main, max_len=50), use_container_width=True)
 
-                # 입시결과 (이름 바꾸기)
+                # 입시결과
                 result_name = type_name
                 if result_name in st.session_state.admission_data:
                     st.markdown(f"### {result_name}(입시결과)")
@@ -243,14 +243,10 @@ else:
                     for label, (content, fname) in st.session_state.pdf_buffers.items():
                         st.download_button(
                             label=f"📄 {label} 다운로드",
-                           
-
-                                                st.download_button(
-                        label=f"📄 {label} 다운로드",
-                        data=content,
-                        file_name=fname,
-                        mime="application/pdf"
-                    )
+                            data=content,
+                            file_name=fname,
+                            mime="application/pdf"
+                        )
                 else:
                     st.warning("모집요강 PDF가 없습니다.")
 
