@@ -205,14 +205,14 @@ else:
                 # 2026학년도 주요사항
                 main_name = f"{type_name}(주요사항)"
                 if main_name in st.session_state.admission_data:
-                    st.markdown(f"###📌 {search_year}학년도 전형별 주요사항")
+                    st.markdown(f"### 📌 {search_year}학년도 전형별 주요사항")
                     df_main = st.session_state.admission_data[main_name]
                     st.dataframe(wrap_long_text(df_main, max_len=50), use_container_width=True)
 
                 # 2025학년도 입시결과
                 result_name = type_name
                 if result_name in st.session_state.admission_data:
-                    st.markdown(f"###📊 {search_year-1}학년도 전형 결과")
+                    st.markdown(f"### 📊 {search_year-1}학년도 전형 결과")
                     df_result = st.session_state.admission_data[result_name]
                     st.dataframe(wrap_long_text(df_result, max_len=50), use_container_width=True)
 
@@ -253,4 +253,5 @@ else:
                     st.warning("모집요강 파일이 없습니다.")
 
             st.success("크롤링 완료! ✅")
+
 
