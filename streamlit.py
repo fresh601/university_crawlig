@@ -26,7 +26,6 @@ def sanitize_filename(name: str) -> str:
 def norm_text(el) -> str:
     return ' '.join(el.get_text(separator=' ', strip=True).split())
 
-# ===== 긴 문자열 자동 줄바꿈 =====
 def wrap_long_text(df, max_len=50):
     df_wrapped = df.copy()
     for col in df_wrapped.columns:
@@ -61,44 +60,43 @@ types_main = {
     "수능(주요사항)": {"upcd": "40", "cd": "41"},
 }
 
-@st.cache_data(show_spinner=False)
-def crawl_admission_results(unv_cd, search_syr):
+def crawl_admission_results_chunk(unv_cd, search_syr, name, codes):
+    """
+    전형별로 점진적 크롤링: 한 번에 한 전형만 크롤링
+    """
     sheet_data = {}
-    for name, codes in {**types_results, **types_main}.items():
-        data = {
-            '_csrf': headers['X-CSRF-TOKEN'],
-            'searchSyr': search_syr,
-            'unvCd': str(unv_cd).zfill(7),
-            'compUnvCd': '',
-            'searchUnvComp': '0',
-            'tsrdCmphSlcnArtclUpCd': codes['upcd'],
-            'tsrdCmphSlcnArtclCd': codes['cd'],
-        }
-        try:
-            response = requests.post(
-                'https://www.adiga.kr/uct/acd/ade/criteriaAndResultItemAjax.do',
-                cookies=cookies, headers=headers, data=data, timeout=30
-            )
-            time.sleep(0.2)
-            soup = BeautifulSoup(response.text, 'lxml')
-            tables = soup.find_all('table')
-            df_list = []
-            for table in tables:
-                try:
-                    df_table = pd.read_html(StringIO(str(table)), flavor='lxml')[0]
-                    df_list.append(df_table)
-                    df_list.append(pd.DataFrame([['' for _ in range(df_table.shape[1])]]))
-                except:
-                    continue
-            if df_list:
-                combined_df = pd.concat(df_list, ignore_index=True)
-                sheet_data[name] = combined_df
-        except Exception as e:
-            st.warning(f"{name} 크롤링 실패: {e}")
+    data = {
+        '_csrf': headers['X-CSRF-TOKEN'],
+        'searchSyr': search_syr,
+        'unvCd': str(unv_cd).zfill(7),
+        'compUnvCd': '',
+        'searchUnvComp': '0',
+        'tsrdCmphSlcnArtclUpCd': codes['upcd'],
+        'tsrdCmphSlcnArtclCd': codes['cd'],
+    }
+    try:
+        response = requests.post(
+            'https://www.adiga.kr/uct/acd/ade/criteriaAndResultItemAjax.do',
+            cookies=cookies, headers=headers, data=data, timeout=30
+        )
+        time.sleep(0.2)
+        soup = BeautifulSoup(response.text, 'lxml')
+        tables = soup.find_all('table')
+        df_list = []
+        for table in tables:
+            try:
+                df_table = pd.read_html(StringIO(str(table)), flavor='lxml')[0]
+                df_list.append(df_table)
+                df_list.append(pd.DataFrame([['' for _ in range(df_table.shape[1])]]))
+            except:
+                continue
+        if df_list:
+            combined_df = pd.concat(df_list, ignore_index=True)
+            sheet_data[name] = combined_df
+    except Exception as e:
+        st.warning(f"{name} 크롤링 실패: {e}")
     return sheet_data
 
-# ===== 모집요강 PDF 다운로드 =====
-@st.cache_data(show_spinner=False)
 def extract_and_download_pdfs(unv_cd, search_syr, univ_name):
     plan_ids = susi_ids = jeongsi_ids = None
     params = {"menuId": MENU_ID, "unvCd": unv_cd, "searchSyr": search_syr}
@@ -171,46 +169,50 @@ else:
             types_options = ["전체"] + list(types_results.keys()) + list(types_main.keys())
             selected_type = st.selectbox("전형 선택", types_options)
 
+        # ===== Placeholder 준비 =====
+        top_container = st.container()   # 주요사항
+        bottom_container = st.container() # 입시결과
+        pdf_container = st.container()    # PDF 다운로드
+
         # 버튼 클릭 후 크롤링
-        if st.button("크롤링 시작"):
-            row = df[df["학교명"] == selected_univ].iloc[0]
-            unv_cd = str(row["코드번호"]).zfill(7)
+        if st.button("크롤링 시작") or "admission_data" in st.session_state:
 
-            st.info(f"{selected_univ} 입시자료 로딩 중... ⏳")
-            admission_data = crawl_admission_results(unv_cd, search_year)
-            pdf_buffers = extract_and_download_pdfs(unv_cd, search_year, selected_univ)
+            if "admission_data" not in st.session_state:
+                # 최초 크롤링 실행
+                row = df[df["학교명"] == selected_univ].iloc[0]
+                unv_cd = str(row["코드번호"]).zfill(7)
 
-            # ===== 오른쪽 화면 상/하 프레임 =====
-            top_container = st.container()   # 주요사항
-            bottom_container = st.container() # 입시결과
+                st.info(f"{selected_univ} 입시자료 로딩 중... ⏳")
+                st.session_state.admission_data = {}  # 초기화
+                st.session_state.pdf_buffers = {}
 
-            # 상단: 주요사항
-            with top_container:
-                st.subheader(f"📌 {search_year} 전형별 주요사항")
-                for sheet_name, df_sheet in admission_data.items():
-                    if "주요사항" not in sheet_name:
-                        continue
-                    if selected_type != "전체" and selected_type != sheet_name:
-                        continue
-                    st.markdown(f"**{sheet_name}**")
-                    df_to_show = wrap_long_text(df_sheet, max_len=50)
-                    st.dataframe(df_to_show, use_container_width=True)
+                # ===== 전형별로 점진적 크롤링 =====
+                all_types = {**types_results, **types_main}
+                progress_bar = st.progress(0)
+                total = len(all_types)
+                for i, (name, codes) in enumerate(all_types.items(), 1):
+                    st.info(f"{name} 크롤링 중...")
+                    data_chunk = crawl_admission_results_chunk(unv_cd, search_year, name, codes)
+                    st.session_state.admission_data.update(data_chunk)
 
-            # 하단: 입시결과
-            with bottom_container:
-                st.subheader(f"📊 {search_year-1}학년도 입시결과")
-                for sheet_name, df_sheet in admission_data.items():
-                    if "주요사항" in sheet_name:
-                        continue
-                    if selected_type != "전체" and selected_type != sheet_name:
-                        continue
-                    st.markdown(f"**{sheet_name}**")
-                    st.dataframe(df_sheet, use_container_width=True)
+                    # 주요사항/입시결과를 바로 화면에 표시
+                    for sheet_name, df_sheet in data_chunk.items():
+                        if selected_type != "전체" and selected_type != sheet_name:
+                            continue
+                        container = top_container if "주요사항" in sheet_name else bottom_container
+                        with container:
+                            st.markdown(f"**{sheet_name}**")
+                            st.dataframe(wrap_long_text(df_sheet, max_len=50), use_container_width=True)
 
-            # Excel 다운로드
+                    progress_bar.progress(i / total)
+
+                # PDF 크롤링
+                st.session_state.pdf_buffers = extract_and_download_pdfs(unv_cd, search_year, selected_univ)
+
+            # ===== 다운로드 버튼 =====
             excel_buffer = BytesIO()
             with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
-                for sheet_name, df_sheet in admission_data.items():
+                for sheet_name, df_sheet in st.session_state.admission_data.items():
                     if selected_type != "전체" and selected_type != sheet_name:
                         continue
                     df_sheet.to_excel(writer, sheet_name=sheet_name[:31], index=False, header=False)
@@ -223,15 +225,17 @@ else:
             )
 
             # PDF 다운로드
-            if pdf_buffers:
-                st.markdown("### 모집요강 PDF 다운로드")
-                for label, (content, fname) in pdf_buffers.items():
-                    st.download_button(
-                        label=f"📄 {label} 다운로드",
-                        data=content,
-                        file_name=fname,
-                        mime="application/pdf"
-                    )
-            else:
-                st.warning("모집요강 PDF가 없습니다.")
+            with pdf_container:
+                if st.session_state.pdf_buffers:
+                    st.markdown("### 모집요강 PDF 다운로드")
+                    for label, (content, fname) in st.session_state.pdf_buffers.items():
+                        st.download_button(
+                            label=f"📄 {label} 다운로드",
+                            data=content,
+                            file_name=fname,
+                            mime="application/pdf"
+                        )
+                else:
+                    st.warning("모집요강 PDF가 없습니다.")
+
             st.success("크롤링 완료! ✅")
