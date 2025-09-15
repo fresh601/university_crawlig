@@ -248,6 +248,7 @@ else:
                             mime="application/pdf"
                         )
                 else:
-                    st.warning("모집요강 PDF가 없습니다.")
+                    st.warning("모집요강이 없습니다.")
 
             st.success("크롤링 완료! ✅")
+
