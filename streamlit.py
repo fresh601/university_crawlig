@@ -2264,81 +2264,53 @@ else:
             )
 
 
-    # ========================================================
-    # 17. 모집요강 다운로드
-    # ========================================================
+# ========================================================
+# 17. 모집요강 다운로드
+# ========================================================
 
-    with pdf_container:
+with pdf_container:
 
+    if (
+        "file_buffers"
+        in st.session_state
+        and
+        st.session_state.file_buffers
+    ):
 
-        if (
+        st.markdown(
+            "### 1️⃣ 모집요강 다운로드"
+        )
 
-            "file_buffers"
-            in st.session_state
-
-            and
-
-            st.session_state.file_buffers
-
+        for label, file_info in (
+            st.session_state.file_buffers.items()
         ):
 
+            content = file_info[0]
+            fname = file_info[1]
+            mime_type = file_info[2]
 
-            st.markdown(
-                "### 1️⃣ 모집요강 다운로드"
-            )
+            st.download_button(
 
+                label=f"📄 {label} 다운로드",
 
-            for (
-                label,
-                (
-                    content,
-                    fname,
-                    mime_type
-                )
-            in (
+                data=content,
 
-                st.session_state
-                .file_buffers
-                .items()
+                file_name=fname,
 
-            ):
+                mime=mime_type,
 
-
-                st.download_button(
-
-                    label=
-                        f"📄 {label} 다운로드",
-
-                    data=
-                        content,
-
-                    file_name=
-                        fname,
-
-                    mime=
-                        mime_type,
-
-                    key=
-                        f"file_download_{label}"
-
-                )
-
-
-        elif (
-
-            "admission_data"
-            in st.session_state
-
-            and
-
-            st.session_state.admission_data
-
-        ):
-
-
-            st.warning(
-
-                f"{search_year}학년도 "
-                "모집요강 파일을 찾지 못했습니다."
+                key=f"file_download_{label}"
 
             )
+
+    elif (
+        "admission_data"
+        in st.session_state
+        and
+        st.session_state.admission_data
+    ):
+
+        st.warning(
+            f"{search_year}학년도 "
+            "모집요강 파일을 찾지 못했습니다."
+        )
