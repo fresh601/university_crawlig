@@ -12,7 +12,7 @@ import streamlit as st
 
 
 # ============================================================
-# 기본 설정
+# 1. 기본 설정
 # ============================================================
 
 BASE = "https://www.adiga.kr"
@@ -41,13 +41,24 @@ NEW_RESULT_URL = (
 
 MENU_ID = "PCUVTINF2000"
 
+# 기본 학년도
 SEARCH_YEAR_DEFAULT = 2027
 
+# 대학 목록 파일
 UNIV_LIST_PATH = "대학교별 코드.xlsx"
 
 
 # ============================================================
-# 유틸 함수
+# 2. 페이지 설정
+# ============================================================
+
+st.set_page_config(
+    layout="wide"
+)
+
+
+# ============================================================
+# 3. 유틸 함수
 # ============================================================
 
 def sanitize_filename(name: str) -> str:
@@ -110,8 +121,115 @@ def wrap_long_text(
     return df_wrapped
 
 
+def normalize_dataframe_columns(df):
+
+    df = df.copy()
+
+    # MultiIndex → 일반 문자열 Index
+    if isinstance(
+        df.columns,
+        pd.MultiIndex
+    ):
+
+        new_columns = []
+
+        for col in df.columns:
+
+            parts = []
+
+            for item in col:
+
+                if pd.isna(item):
+                    continue
+
+                text = str(item).strip()
+
+                if not text:
+                    continue
+
+                if text.lower() == "nan":
+                    continue
+
+                parts.append(text)
+
+            if parts:
+
+                column_name = " ".join(parts)
+
+            else:
+
+                column_name = ""
+
+            new_columns.append(
+                column_name
+            )
+
+        df.columns = new_columns
+
+    else:
+
+        df.columns = [
+
+            str(col).strip()
+
+            for col in df.columns
+
+        ]
+
+    # 반드시 일반 Index로 변경
+    df.columns = pd.Index(
+        [
+            str(col)
+            for col in df.columns
+        ]
+    )
+
+    # 중복 컬럼명 처리
+    used = {}
+    final_columns = []
+
+    for col in df.columns:
+
+        if col not in used:
+
+            used[col] = 0
+            final_columns.append(col)
+
+        else:
+
+            used[col] += 1
+
+            final_columns.append(
+                f"{col}_{used[col]}"
+            )
+
+    df.columns = pd.Index(
+        final_columns
+    )
+
+    return df
+
+
+def make_blank_row(df):
+
+    return pd.DataFrame(
+
+        [
+            [
+                ""
+                for _ in range(
+                    len(df.columns)
+                )
+            ]
+        ],
+
+        columns=df.columns
+
+    )
+
+
 # ============================================================
-# 세션 생성
+# 4. 세션 생성
 # ============================================================
 
 def create_session():
@@ -136,7 +254,7 @@ def create_session():
 
 
 # ============================================================
-# CSRF 토큰 가져오기
+# 5. CSRF 토큰 가져오기
 # ============================================================
 
 def get_csrf_token(
@@ -198,7 +316,7 @@ def get_csrf_token(
 
 
 # ============================================================
-# 전형 구분
+# 6. 전형 구분
 # ============================================================
 
 types_results = {
@@ -242,9 +360,9 @@ types_main = {
 
 
 # ============================================================
-# 주요사항 크롤링
+# 7. 주요사항 크롤링
 #
-# 기존 AJAX 방식 유지
+# 기존 criteriaAndResultItemAjax.do 사용
 # ============================================================
 
 def crawl_major_items(
@@ -340,7 +458,7 @@ def crawl_major_items(
     except Exception as e:
 
         st.warning(
-            f"{name} 크롤링 실패: {e}"
+            f"{name} 요청 실패: {e}"
         )
 
         return sheet_data
@@ -378,26 +496,38 @@ def crawl_major_items(
 
                 df_table = dfs[0]
 
+                # --------------------------------------------
+                # MultiIndex 문제 해결
+                # --------------------------------------------
+
+                df_table = (
+                    normalize_dataframe_columns(
+                        df_table
+                    )
+                )
+
+                df_table = (
+                    df_table.reset_index(
+                        drop=True
+                    )
+                )
+
+                if df_table.empty:
+                    continue
+
                 df_list.append(
                     df_table
                 )
 
+                # --------------------------------------------
                 # 표 사이 빈 줄
+                # 반드시 같은 columns 사용
+                # --------------------------------------------
+
                 df_list.append(
-
-                    pd.DataFrame(
-
-                        [
-                            [
-                                ""
-                                for _ in range(
-                                    df_table.shape[1]
-                                )
-                            ]
-                        ]
-
+                    make_blank_row(
+                        df_table
                     )
-
                 )
 
             except Exception:
@@ -407,10 +537,38 @@ def crawl_major_items(
 
         if df_list:
 
+            normalized_list = []
+
+            for temp_df in df_list:
+
+                temp_df = (
+                    normalize_dataframe_columns(
+                        temp_df
+                    )
+                )
+
+                normalized_list.append(
+                    temp_df
+                )
+
+
             combined_df = pd.concat(
-                df_list,
-                ignore_index=True
+
+                normalized_list,
+
+                ignore_index=True,
+
+                sort=False
+
             )
+
+
+            combined_df = (
+                normalize_dataframe_columns(
+                    combined_df
+                )
+            )
+
 
             sheet_data[name] = (
                 combined_df
@@ -428,7 +586,7 @@ def crawl_major_items(
 
 
 # ============================================================
-# 입시결과 크롤링
+# 8. 입시결과 크롤링
 #
 # 2026 이하 → 기존 AJAX
 # 2027 이상 → 새로운 AJAX
@@ -533,7 +691,7 @@ def crawl_admission_results_chunk(
         except Exception as e:
 
             st.warning(
-                f"{name} 크롤링 실패: {e}"
+                f"{name} 요청 실패: {e}"
             )
 
             return sheet_data
@@ -542,7 +700,7 @@ def crawl_admission_results_chunk(
     # ========================================================
     # 2026학년도 이하
     #
-    # 기존 코드 그대로 유지
+    # 기존 코드 유지
     # ========================================================
 
     else:
@@ -634,7 +792,7 @@ def crawl_admission_results_chunk(
         except Exception as e:
 
             st.warning(
-                f"{name} 크롤링 실패: {e}"
+                f"{name} 요청 실패: {e}"
             )
 
             return sheet_data
@@ -676,41 +834,99 @@ def crawl_admission_results_chunk(
 
                 df_table = dfs[0]
 
+
+                # --------------------------------------------
+                # MultiIndex → 일반 Index
+                # --------------------------------------------
+
+                df_table = (
+                    normalize_dataframe_columns(
+                        df_table
+                    )
+                )
+
+
+                df_table = (
+                    df_table.reset_index(
+                        drop=True
+                    )
+                )
+
+
+                if df_table.empty:
+                    continue
+
+
                 df_list.append(
                     df_table
                 )
 
+
+                # --------------------------------------------
+                # 빈 줄
+                # --------------------------------------------
+
                 df_list.append(
-
-                    pd.DataFrame(
-
-                        [
-                            [
-                                ""
-                                for _ in range(
-                                    df_table.shape[1]
-                                )
-                            ]
-                        ]
-
+                    make_blank_row(
+                        df_table
                     )
-
                 )
+
 
             except Exception:
 
                 continue
 
 
+        # ====================================================
+        # 표 합치기
+        # ====================================================
+
         if df_list:
 
+            normalized_list = []
+
+
+            for temp_df in df_list:
+
+                temp_df = (
+                    normalize_dataframe_columns(
+                        temp_df
+                    )
+                )
+
+                normalized_list.append(
+                    temp_df
+                )
+
+
             combined_df = pd.concat(
-                df_list,
-                ignore_index=True
+
+                normalized_list,
+
+                ignore_index=True,
+
+                sort=False
+
             )
+
+
+            combined_df = (
+                normalize_dataframe_columns(
+                    combined_df
+                )
+            )
+
 
             sheet_data[name] = (
                 combined_df
+            )
+
+
+        else:
+
+            st.warning(
+                f"{name}: 표를 찾지 못했습니다."
             )
 
 
@@ -725,9 +941,7 @@ def crawl_admission_results_chunk(
 
 
 # ============================================================
-# 모집요강 파일 다운로드
-#
-# 2026 / 2027 공통
+# 9. 모집요강 파일 다운로드
 # ============================================================
 
 def extract_and_download_files(
@@ -820,12 +1034,13 @@ def extract_and_download_files(
 
 
         # ----------------------------------------------------
-        # a 태그 우선
+        # a[onclick]
         # ----------------------------------------------------
 
         a = li.select_one(
             "a[onclick]"
         )
+
 
         if a:
 
@@ -836,7 +1051,7 @@ def extract_and_download_files(
 
 
         # ----------------------------------------------------
-        # 혹시 다른 태그에 onclick이 있는 경우
+        # 다른 태그의 onclick도 검색
         # ----------------------------------------------------
 
         if not onclick:
@@ -851,6 +1066,7 @@ def extract_and_download_files(
                     "onclick",
                     ""
                 )
+
 
                 if (
                     "fnUnvFileDownOne"
@@ -868,9 +1084,7 @@ def extract_and_download_files(
 
 
         # ====================================================
-        # fileId / fileSn 추출
-        #
-        # 작은따옴표 / 큰따옴표 모두 대응
+        # fileId / fileSn
         # ====================================================
 
         m = re.search(
@@ -900,9 +1114,13 @@ def extract_and_download_files(
         # ====================================================
 
         if (
+
             "대학입학전형" in text
+
             and
+
             "시행계획" in text
+
         ):
 
             plan_ids = (
@@ -913,9 +1131,13 @@ def extract_and_download_files(
 
 
         elif (
+
             "수시" in text
+
             and
+
             "모집요강" in text
+
         ):
 
             susi_ids = (
@@ -926,9 +1148,13 @@ def extract_and_download_files(
 
 
         elif (
+
             "정시" in text
+
             and
+
             "모집요강" in text
+
         ):
 
             jeongsi_ids = (
@@ -939,7 +1165,7 @@ def extract_and_download_files(
 
 
     # ========================================================
-    # 파일 다운로드
+    # 실제 파일 다운로드
     # ========================================================
 
     file_buffers = {}
@@ -966,6 +1192,7 @@ def extract_and_download_files(
 
 
     for label, ids in target_files:
+
 
         if not ids:
 
@@ -1046,6 +1273,11 @@ def extract_and_download_files(
 
             if r.status_code != 200:
 
+                st.warning(
+                    f"{label}: 서버 응답 "
+                    f"{r.status_code}"
+                )
+
                 continue
 
 
@@ -1081,7 +1313,7 @@ def extract_and_download_files(
 
 
             # =================================================
-            # 실제 바이너리로 파일 형식 판정
+            # PDF
             # =================================================
 
             if content.startswith(
@@ -1094,6 +1326,10 @@ def extract_and_download_files(
                     "application/pdf"
                 )
 
+
+            # =================================================
+            # HWP
+            # =================================================
 
             elif (
 
@@ -1115,41 +1351,68 @@ def extract_and_download_files(
                 )
 
 
+            # =================================================
+            # ZIP / HWPX / XLSX
+            # =================================================
+
             elif content.startswith(
                 b"PK"
             ):
 
-                # HWPX
+
                 if (
-                    "hwpx" in content_disp.lower()
+
+                    "hwpx"
+                    in content_disp.lower()
+
                     or
-                    "hwpx" in content_type
+
+                    "hwpx"
+                    in content_type
+
                 ):
 
                     ext = ".hwpx"
 
-                # XLSX
+                    mime_type = (
+                        "application/zip"
+                    )
+
+
                 elif (
-                    "xlsx" in content_disp.lower()
+
+                    "xlsx"
+                    in content_disp.lower()
+
                     or
-                    "spreadsheet" in content_type
+
+                    "spreadsheet"
+                    in content_type
+
                 ):
 
                     ext = ".xlsx"
+
+                    mime_type = (
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+
 
                 else:
 
                     ext = ".zip"
 
+                    mime_type = (
+                        "application/zip"
+                    )
 
-                mime_type = (
-                    "application/zip"
-                )
 
+            # =================================================
+            # Content-Disposition으로 추가 판정
+            # =================================================
 
             else:
 
-                # Content-Disposition으로 보정
                 lower_disp = (
                     content_disp.lower()
                 )
@@ -1200,6 +1463,10 @@ def extract_and_download_files(
                     )
 
 
+            # =================================================
+            # 파일명
+            # =================================================
+
             fname = sanitize_filename(
 
                 f"{univ_name}_"
@@ -1231,21 +1498,13 @@ def extract_and_download_files(
 
 
 # ============================================================
-# Streamlit 설정
+# 10. 대학 목록 확인
 # ============================================================
-
-st.set_page_config(
-    layout="wide"
-)
 
 st.title(
     "대학 입시자료 조회 및 다운로드"
 )
 
-
-# ============================================================
-# 대학교 목록
-# ============================================================
 
 if not os.path.exists(
     UNIV_LIST_PATH
@@ -1253,250 +1512,291 @@ if not os.path.exists(
 
     st.error(
         f"{UNIV_LIST_PATH} 파일이 없습니다. "
-        "깃허브에 포함시켜주세요."
+        "GitHub에 포함시켜주세요."
     )
 
 else:
 
-    df = pd.read_excel(
-        UNIV_LIST_PATH
-    )
+    try:
+
+        df = pd.read_excel(
+            UNIV_LIST_PATH
+        )
+
+    except Exception as e:
+
+        st.error(
+            f"대학교별 코드.xlsx 읽기 실패: {e}"
+        )
+
+        st.stop()
 
 
     if (
+
         "코드번호" not in df.columns
+
         or
+
         "학교명" not in df.columns
+
     ):
 
         st.error(
             "'코드번호'와 '학교명' 열이 필요합니다."
         )
 
+        st.stop()
 
-    else:
 
-        univ_list = (
-            df["학교명"]
-            .dropna()
-            .tolist()
+    univ_list = (
+
+        df["학교명"]
+        .dropna()
+        .astype(str)
+        .tolist()
+
+    )
+
+
+    if not univ_list:
+
+        st.error(
+            "대학교 목록이 없습니다."
+        )
+
+        st.stop()
+
+
+    # ========================================================
+    # 11. 사이드바
+    # ========================================================
+
+    with st.sidebar:
+
+        search_year = st.number_input(
+
+            "학년도 입력",
+
+            min_value=2000,
+
+            max_value=2100,
+
+            value=SEARCH_YEAR_DEFAULT,
+
+            step=1
+
+        )
+
+
+        selected_univ = st.selectbox(
+
+            "대학 선택",
+
+            univ_list
+
+        )
+
+
+        types_options = (
+
+            ["전체"]
+
+            + list(
+                types_results.keys()
+            )
+
+            + list(
+                types_main.keys()
+            )
+
+        )
+
+
+        selected_type = st.selectbox(
+
+            "전형 선택",
+
+            types_options
+
+        )
+
+
+    # ========================================================
+    # 12. 학년도 / 대학 / 전형 변경 시 초기화
+    # ========================================================
+
+    if (
+
+        "selected_univ_prev"
+        not in st.session_state
+
+        or
+
+        st.session_state.selected_univ_prev
+        != selected_univ
+
+        or
+
+        st.session_state.get(
+            "search_year_prev"
+        )
+        != search_year
+
+        or
+
+        st.session_state.get(
+            "selected_type_prev"
+        )
+        != selected_type
+
+    ):
+
+
+        st.session_state.pop(
+            "admission_data",
+            None
+        )
+
+
+        st.session_state.pop(
+            "file_buffers",
+            None
+        )
+
+
+        st.session_state.selected_univ_prev = (
+            selected_univ
+        )
+
+
+        st.session_state.search_year_prev = (
+            search_year
+        )
+
+
+        st.session_state.selected_type_prev = (
+            selected_type
+        )
+
+
+    # ========================================================
+    # 13. 화면 영역
+    # ========================================================
+
+    pdf_container = st.container()
+
+    status_placeholder = st.empty()
+
+    progress_bar = st.progress(0)
+
+
+    # ========================================================
+    # 14. 크롤링 시작
+    # ========================================================
+
+    if st.button(
+        "크롤링 시작"
+    ):
+
+
+        row = df[
+            df["학교명"].astype(str)
+            == selected_univ
+        ].iloc[0]
+
+
+        unv_cd = str(
+            row["코드번호"]
+        ).strip()
+
+
+        if unv_cd.endswith(
+            ".0"
+        ):
+
+            unv_cd = (
+                unv_cd[:-2]
+            )
+
+
+        unv_cd = re.sub(
+            r"\D",
+            "",
+            unv_cd
+        )
+
+
+        unv_cd = unv_cd.zfill(
+            7
+        )
+
+
+        # 기존 결과 초기화
+        st.session_state.admission_data = {}
+
+        st.session_state.file_buffers = {}
+
+
+        # ====================================================
+        # 선택 전형 결정
+        # ====================================================
+
+        all_types = {}
+
+
+        if selected_type == "전체":
+
+            all_types = {
+
+                **types_main,
+
+                **types_results
+
+            }
+
+
+        elif selected_type in types_main:
+
+            all_types = {
+
+                selected_type:
+                    types_main[
+                        selected_type
+                    ]
+
+            }
+
+
+        elif selected_type in types_results:
+
+            all_types = {
+
+                selected_type:
+                    types_results[
+                        selected_type
+                    ]
+
+            }
+
+
+        total = len(
+            all_types
         )
 
 
         # ====================================================
-        # 사이드바
+        # 입시자료 크롤링
         # ====================================================
 
-        with st.sidebar:
+        if total == 0:
 
-            search_year = st.number_input(
-
-                "학년도 입력",
-
-                min_value=2000,
-
-                max_value=2100,
-
-                value=SEARCH_YEAR_DEFAULT,
-
-                step=1
-
+            status_placeholder.warning(
+                "크롤링할 전형이 없습니다."
             )
 
 
-            selected_univ = st.selectbox(
-
-                "대학 선택",
-
-                univ_list
-
-            )
-
-
-            types_options = (
-
-                ["전체"]
-
-                + list(
-                    types_results.keys()
-                )
-
-                + list(
-                    types_main.keys()
-                )
-
-            )
-
-
-            selected_type = st.selectbox(
-
-                "전형 선택",
-
-                types_options
-
-            )
-
-
-        # ====================================================
-        # 선택값 변경 시 이전 자료 삭제
-        # ====================================================
-
-        if (
-
-            "selected_univ_prev"
-            not in st.session_state
-
-            or
-
-            st.session_state.selected_univ_prev
-            != selected_univ
-
-            or
-
-            st.session_state.get(
-                "search_year_prev"
-            )
-            != search_year
-
-            or
-
-            st.session_state.get(
-                "selected_type_prev"
-            )
-            != selected_type
-
-        ):
-
-            st.session_state.pop(
-                "admission_data",
-                None
-            )
-
-            st.session_state.pop(
-                "file_buffers",
-                None
-            )
-
-            st.session_state.selected_univ_prev = (
-                selected_univ
-            )
-
-            st.session_state.search_year_prev = (
-                search_year
-            )
-
-            st.session_state.selected_type_prev = (
-                selected_type
-            )
-
-
-        # ====================================================
-        # 화면 영역
-        # ====================================================
-
-        pdf_container = st.container()
-
-        status_placeholder = st.empty()
-
-        progress_bar = st.progress(0)
-
-
-        # ====================================================
-        # 크롤링 시작
-        # ====================================================
-
-        if st.button(
-            "크롤링 시작"
-        ):
-
-
-            row = df[
-                df["학교명"]
-                == selected_univ
-            ].iloc[0]
-
-
-            unv_cd = str(
-                row["코드번호"]
-            ).strip()
-
-
-            if unv_cd.endswith(
-                ".0"
-            ):
-
-                unv_cd = (
-                    unv_cd[:-2]
-                )
-
-
-            unv_cd = re.sub(
-                r"\D",
-                "",
-                unv_cd
-            )
-
-
-            unv_cd = unv_cd.zfill(
-                7
-            )
-
-
-            st.session_state.admission_data = {}
-
-            st.session_state.file_buffers = {}
-
-
-            # =================================================
-            # 선택된 전형 결정
-            # =================================================
-
-            all_types = {}
-
-
-            if selected_type == "전체":
-
-                all_types = {
-
-                    **types_main,
-
-                    **types_results
-
-                }
-
-
-            elif selected_type in types_main:
-
-                all_types = {
-
-                    selected_type:
-                        types_main[
-                            selected_type
-                        ]
-
-                }
-
-
-            elif selected_type in types_results:
-
-                all_types = {
-
-                    selected_type:
-                        types_results[
-                            selected_type
-                        ]
-
-                }
-
-
-            total = len(
-                all_types
-            )
-
-
-            # =================================================
-            # 주요사항 / 입시결과
-            # =================================================
+        else:
 
             for i, (
                 name,
@@ -1515,12 +1815,16 @@ else:
                 )
 
 
+                # --------------------------------------------
                 # 주요사항
+                # --------------------------------------------
+
                 if name.endswith(
                     "(주요사항)"
                 ):
 
                     data_chunk = (
+
                         crawl_major_items(
 
                             unv_cd,
@@ -1532,13 +1836,18 @@ else:
                             codes
 
                         )
+
                     )
 
 
+                # --------------------------------------------
                 # 입시결과
+                # --------------------------------------------
+
                 else:
 
                     data_chunk = (
+
                         crawl_admission_results_chunk(
 
                             unv_cd,
@@ -1550,116 +1859,266 @@ else:
                             codes
 
                         )
+
                     )
 
 
-                st.session_state.admission_data.update(
-                    data_chunk
-                )
+                if data_chunk:
 
-
-                if total:
-
-                    progress_bar.progress(
-                        i / total
+                    st.session_state.admission_data.update(
+                        data_chunk
                     )
 
 
-            # =================================================
-            # 모집요강
-            # =================================================
-
-            status_placeholder.info(
-
-                f"{search_year}학년도 "
-                "모집요강 파일 확인 중..."
-
-            )
-
-
-            st.session_state.file_buffers = (
-
-                extract_and_download_files(
-
-                    unv_cd,
-
-                    search_year,
-
-                    selected_univ
-
+                progress_bar.progress(
+                    i / total
                 )
 
+
+        # ====================================================
+        # 모집요강
+        # ====================================================
+
+        status_placeholder.info(
+
+            f"{search_year}학년도 "
+            "모집요강 파일 확인 중..."
+
+        )
+
+
+        st.session_state.file_buffers = (
+
+            extract_and_download_files(
+
+                unv_cd,
+
+                search_year,
+
+                selected_univ
+
             )
 
+        )
 
-            progress_bar.progress(
-                1.0
-            )
 
+        progress_bar.progress(
+            1.0
+        )
+
+
+        # ====================================================
+        # 완료
+        # ====================================================
+
+        result_count = len(
+            st.session_state.admission_data
+        )
+
+        file_count = len(
+            st.session_state.file_buffers
+        )
+
+
+        if result_count > 0 or file_count > 0:
 
             status_placeholder.success(
-                "크롤링 완료! ✅"
+
+                f"크롤링 완료! ✅ "
+                f"(자료 {result_count}개 / "
+                f"파일 {file_count}개)"
+
+            )
+
+        else:
+
+            status_placeholder.warning(
+
+                "크롤링은 완료되었지만 "
+                "수집된 자료가 없습니다."
+
             )
 
 
-        # ====================================================
-        # 결과 표시
-        # ====================================================
+    # ========================================================
+    # 15. 결과 표시
+    # ========================================================
 
-        if (
+    if (
 
-            "admission_data"
-            in st.session_state
+        "admission_data"
+        in st.session_state
 
-            and
+        and
 
-            st.session_state.admission_data
+        st.session_state.admission_data
 
-        ):
+    ):
 
 
-            type_order = [
+        type_order = [
 
-                (
-                    "학생부종합",
-                    "2️⃣ 학생부종합전형"
-                ),
+            (
+                "학생부종합",
+                "2️⃣ 학생부종합전형"
+            ),
 
-                (
-                    "학생부교과",
-                    "3️⃣ 학생부교과전형"
-                ),
+            (
+                "학생부교과",
+                "3️⃣ 학생부교과전형"
+            ),
 
-                (
-                    "수능",
-                    "4️⃣ 수능위주전형"
+            (
+                "수능",
+                "4️⃣ 수능위주전형"
+            )
+
+        ]
+
+
+        for (
+            type_name,
+            header_name
+        ) in type_order:
+
+
+            if (
+
+                type_name
+                in st.session_state.admission_data
+
+                or
+
+                f"{type_name}(주요사항)"
+                in st.session_state.admission_data
+
+            ):
+
+
+                st.markdown(
+                    f"## {header_name}"
                 )
 
-            ]
 
+                # --------------------------------------------
+                # 주요사항
+                # --------------------------------------------
 
-            for (
-                type_name,
-                header_name
-            ) in type_order:
+                main_name = (
+                    f"{type_name}(주요사항)"
+                )
 
 
                 if (
 
-                    type_name
-                    in st.session_state.admission_data
-
-                    or
-
-                    f"{type_name}(주요사항)"
+                    main_name
                     in st.session_state.admission_data
 
                 ):
 
 
                     st.markdown(
-                        f"## {header_name}"
+
+                        f"### 📌 "
+                        f"{search_year}학년도 "
+                        f"전형별 주요사항"
+
                     )
+
+
+                    df_main = (
+
+                        st.session_state
+                        .admission_data[
+                            main_name
+                        ]
+
+                    )
+
+
+                    st.dataframe(
+
+                        wrap_long_text(
+                            df_main,
+                            max_len=50
+                        ),
+
+                        use_container_width=True
+
+                    )
+
+
+                # --------------------------------------------
+                # 입시결과
+                # --------------------------------------------
+
+                result_name = type_name
+
+
+                if (
+
+                    result_name
+                    in st.session_state.admission_data
+
+                ):
+
+
+                    st.markdown(
+
+                        f"### 📊 "
+                        f"{search_year - 1}"
+                        f"학년도 전형 결과"
+
+                    )
+
+
+                    df_result = (
+
+                        st.session_state
+                        .admission_data[
+                            result_name
+                        ]
+
+                    )
+
+
+                    st.dataframe(
+
+                        wrap_long_text(
+                            df_result,
+                            max_len=50
+                        ),
+
+                        use_container_width=True
+
+                    )
+
+
+        # ====================================================
+        # 16. Excel 다운로드
+        # ====================================================
+
+        excel_buffer = BytesIO()
+
+
+        try:
+
+            with pd.ExcelWriter(
+
+                excel_buffer,
+
+                engine="openpyxl"
+
+            ) as excel_writer:
+
+
+                written_sheets = 0
+
+
+                for (
+                    type_name,
+                    _
+                ) in type_order:
 
 
                     # ----------------------------------------
@@ -1672,124 +2131,34 @@ else:
 
 
                     if (
+
                         main_name
                         in st.session_state.admission_data
+
                     ):
 
 
-                        st.markdown(
-
-                            f"### 📌 "
-                            f"{search_year}학년도 "
-                            f"전형별 주요사항"
-
-                        )
-
-
-                        df_main = (
+                        df_main_excel = (
 
                             st.session_state
                             .admission_data[
                                 main_name
                             ]
+                            .copy()
 
                         )
 
 
-                        st.dataframe(
-
-                            wrap_long_text(
-                                df_main,
-                                max_len=50
-                            ),
-
-                            use_container_width=True
-
+                        df_main_excel = (
+                            normalize_dataframe_columns(
+                                df_main_excel
+                            )
                         )
 
 
-                    # ----------------------------------------
-                    # 입시결과
-                    # ----------------------------------------
+                        df_main_excel.to_excel(
 
-                    result_name = type_name
-
-
-                    if (
-                        result_name
-                        in st.session_state.admission_data
-                    ):
-
-
-                        st.markdown(
-
-                            f"### 📊 "
-                            f"{search_year - 1}"
-                            f"학년도 전형 결과"
-
-                        )
-
-
-                        df_result = (
-
-                            st.session_state
-                            .admission_data[
-                                result_name
-                            ]
-
-                        )
-
-
-                        st.dataframe(
-
-                            wrap_long_text(
-                                df_result,
-                                max_len=50
-                            ),
-
-                            use_container_width=True
-
-                        )
-
-
-            # =================================================
-            # Excel 다운로드
-            # =================================================
-
-            excel_buffer = BytesIO()
-
-
-            with pd.ExcelWriter(
-
-                excel_buffer,
-
-                engine="openpyxl"
-
-            ):
-
-
-                for (
-                    type_name,
-                    _
-                ) in type_order:
-
-
-                    main_name = (
-                        f"{type_name}(주요사항)"
-                    )
-
-
-                    if (
-                        main_name
-                        in st.session_state.admission_data
-                    ):
-
-
-                        st.session_state.admission_data[
-                            main_name
-                        ].to_excel(
-
-                            writer,
+                            excel_writer,
 
                             sheet_name=
                                 sanitize_filename(
@@ -1803,20 +2172,45 @@ else:
                         )
 
 
+                        written_sheets += 1
+
+
+                    # ----------------------------------------
+                    # 입시결과
+                    # ----------------------------------------
+
                     result_name = type_name
 
 
                     if (
+
                         result_name
                         in st.session_state.admission_data
+
                     ):
 
 
-                        st.session_state.admission_data[
-                            result_name
-                        ].to_excel(
+                        df_result_excel = (
 
-                            writer,
+                            st.session_state
+                            .admission_data[
+                                result_name
+                            ]
+                            .copy()
+
+                        )
+
+
+                        df_result_excel = (
+                            normalize_dataframe_columns(
+                                df_result_excel
+                            )
+                        )
+
+
+                        df_result_excel.to_excel(
+
+                            excel_writer,
 
                             sheet_name=
                                 sanitize_filename(
@@ -1830,86 +2224,121 @@ else:
                         )
 
 
+                        written_sheets += 1
+
+
             excel_buffer.seek(0)
 
 
-            st.download_button(
+            if written_sheets > 0:
 
-                label=
-                    "📥 입시결과 다운로드",
+                st.download_button(
 
-                data=
-                    excel_buffer,
+                    label=
+                        "📥 입시결과 다운로드",
 
-                file_name=
+                    data=
+                        excel_buffer,
 
-                    (
-                        f"{sanitize_filename(selected_univ)}_"
-                        f"{search_year - 1}년_"
-                        f"대학입시결과.xlsx"
-                    ),
+                    file_name=
 
-                mime=
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        (
+                            f"{sanitize_filename(selected_univ)}_"
+                            f"{search_year - 1}년_"
+                            f"대학입시결과.xlsx"
+                        ),
 
+                    mime=
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+
+                    key=
+                        "excel_download"
+
+                )
+
+
+        except Exception as e:
+
+            st.error(
+                f"Excel 파일 생성 실패: {e}"
             )
 
 
-            # =================================================
-            # 모집요강 다운로드
-            # =================================================
+    # ========================================================
+    # 17. 모집요강 다운로드
+    # ========================================================
 
-            with pdf_container:
-
-
-                if (
-                    st.session_state.file_buffers
-                ):
+    with pdf_container:
 
 
-                    st.markdown(
-                        "### 1️⃣ 모집요강 다운로드"
-                    )
+        if (
+
+            "file_buffers"
+            in st.session_state
+
+            and
+
+            st.session_state.file_buffers
+
+        ):
 
 
-                    for (
-                        label,
-                        (
-                            content,
-                            fname,
-                            mime_type
-                        )
-                    ) in (
-
-                        st.session_state
-                        .file_buffers
-                        .items()
-
-                    ):
+            st.markdown(
+                "### 1️⃣ 모집요강 다운로드"
+            )
 
 
-                        st.download_button(
+            for (
+                label,
+                (
+                    content,
+                    fname,
+                    mime_type
+                )
+            in (
 
-                            label=
-                                f"📄 {label} 다운로드",
+                st.session_state
+                .file_buffers
+                .items()
 
-                            data=
-                                content,
-
-                            file_name=
-                                fname,
-
-                            mime=
-                                mime_type
-
-                        )
+            ):
 
 
-                else:
+                st.download_button(
 
-                    st.warning(
+                    label=
+                        f"📄 {label} 다운로드",
 
-                        f"{search_year}학년도 "
-                        "모집요강 파일이 없습니다."
+                    data=
+                        content,
 
-                    )
+                    file_name=
+                        fname,
+
+                    mime=
+                        mime_type,
+
+                    key=
+                        f"file_download_{label}"
+
+                )
+
+
+        elif (
+
+            "admission_data"
+            in st.session_state
+
+            and
+
+            st.session_state.admission_data
+
+        ):
+
+
+            st.warning(
+
+                f"{search_year}학년도 "
+                "모집요강 파일을 찾지 못했습니다."
+
+            )
